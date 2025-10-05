@@ -96,23 +96,96 @@ if ano_sel != "Todos":
     df = df[df["ano_desligamento"] == ano_sel]
 
 # =========================
-# KPIs CLÁSSICOS
+# KPIs E ANÁLISES TEMPORAIS DE TURNOVER
 # =========================
-total_colabs = int(len(df))
-desligados = int((~df["ativo"]).sum())
-ativos = int(df["ativo"].sum())
-turnover = round((desligados / total_colabs) * 100, 1) if total_colabs > 0 else 0.0
 
-voluntario = int(df["motivo_voluntario"].sum())
-involuntario = max(desligados - voluntario, 0)
-perc_vol = round((voluntario / desligados) * 100, 1) if desligados > 0 else 0.0
-perc_invol = round(100 - perc_vol, 1) if desligados > 0 else 0.0
+st.markdown("## 📊 Visão Temporal de Turnover e Tenure")
 
-tempo_medio_casa = 0.0
-if desligados > 0:
-    tempo_medio_casa = round(
-        (df.loc[~df["ativo"], "data de desligamento"] - df["data de admissão"]).dt.days.mean() / 30, 1
+# --- Preparar datas base
+df["mes_desligamento"] = df["data de desligamento"].dt.to_period("M").astype(str)
+df["mes_admissao"] = df["data de admissão"].dt.to_period("M").astype(str)
+df["ano_mes"] = df["data de desligamento"].fillna(df["data de admissão"]).dt.to_period("M").astype(str)
+
+# --- Total por mês
+meses = sorted(df["ano_mes"].dropna().unique().tolist())
+
+# Contagem de desligamentos e ativos
+turnover_mensal = (
+    df.groupby("mes_desligamento")
+    .agg(
+        desligados=("matricula", "count"),
+        voluntarios=("motivo_voluntario", lambda x: (x == True).sum()),
+        involuntarios=("motivo_voluntario", lambda x: (x == False).sum()),
     )
+    .reset_index()
+)
+
+# Calcular ativos estimados (colaboradores com admissão anterior e ainda sem desligamento naquele mês)
+ativos_mensal = []
+for mes in meses:
+    mes_date = pd.Period(mes).to_timestamp()
+    ativos = df[(df["data de admissão"] <= mes_date) & ((df["data de desligamento"].isna()) | (df["data de desligamento"] > mes_date))]
+    ativos_mensal.append({"mes": mes, "ativos": len(ativos)})
+
+ativos_mensal = pd.DataFrame(ativos_mensal)
+turnover_mensal = turnover_mensal.merge(ativos_mensal, left_on="mes_desligamento", right_on="mes", how="left")
+
+# --- Turnover %
+turnover_mensal["turnover_total_%"] = (turnover_mensal["desligados"] / turnover_mensal["ativos"]) * 100
+turnover_mensal["turnover_vol_%"] = (turnover_mensal["voluntarios"] / turnover_mensal["ativos"]) * 100
+turnover_mensal["turnover_invol_%"] = (turnover_mensal["involuntarios"] / turnover_mensal["ativos"]) * 100
+turnover_mensal = turnover_mensal.fillna(0)
+
+# --- KPIs médios
+turnover_medio_total = round(turnover_mensal["turnover_total_%"].mean(), 1)
+turnover_medio_vol = round(turnover_mensal["turnover_vol_%"].mean(), 1)
+turnover_medio_invol = round(turnover_mensal["turnover_invol_%"].mean(), 1)
+
+# --- KPIs TENURE (tempo médio de casa)
+df_desligados = df[~df["ativo"]].copy()
+df_desligados["tenure_meses"] = (df_desligados["data de desligamento"] - df_desligados["data de admissão"]).dt.days / 30
+tenure_total = round(df_desligados["tenure_meses"].mean(), 1)
+tenure_vol = round(df_desligados.loc[df_desligados["motivo_voluntario"], "tenure_meses"].mean(), 1)
+tenure_invol = round(df_desligados.loc[~df_desligados["motivo_voluntario"], "tenure_meses"].mean(), 1)
+tenure_ativos = round(df.loc[df["ativo"], "tempo_casa"].mean(), 1)
+
+# --- KPIs HEADER ORGANIZADOS EM BLOCOS
+st.markdown("### 🧮 Indicadores de Turnover (Médias e Acumulados)")
+colA, colB, colC = st.columns(3)
+colA.metric("📉 Turnover Médio Total (%)", turnover_medio_total)
+colB.metric("🤝 Voluntário (%)", turnover_medio_vol)
+colC.metric("🏢 Involuntário (%)", turnover_medio_invol)
+
+st.markdown("### ⏳ Tenure Médio (Tempo de Casa até Desligamento)")
+colD, colE, colF, colG = st.columns(4)
+colD.metric("⏱️ Total", f"{tenure_total} meses")
+colE.metric("🫶 Voluntário", f"{tenure_vol} meses")
+colF.metric("📋 Involuntário", f"{tenure_invol} meses")
+colG.metric("👥 Ativos", f"{tenure_ativos} meses")
+
+# --- GRÁFICO DE EVOLUÇÃO MENSAL
+st.markdown("### 📆 Evolução Mensal do Turnover (%)")
+fig_turnover_mensal = go.Figure()
+fig_turnover_mensal.add_trace(go.Scatter(
+    x=turnover_mensal["mes_desligamento"], y=turnover_mensal["turnover_total_%"],
+    name="Total", line=dict(color="#00FFAA", width=3)
+))
+fig_turnover_mensal.add_trace(go.Scatter(
+    x=turnover_mensal["mes_desligamento"], y=turnover_mensal["turnover_vol_%"],
+    name="Voluntário", line=dict(color="#FFD700", width=2, dash="dash")
+))
+fig_turnover_mensal.add_trace(go.Scatter(
+    x=turnover_mensal["mes_desligamento"], y=turnover_mensal["turnover_invol_%"],
+    name="Involuntário", line=dict(color="#FF4500", width=2, dash="dot")
+))
+fig_turnover_mensal.update_layout(
+    template="plotly_dark",
+    title="📈 Turnover Mensal (Total, Voluntário e Involuntário)",
+    xaxis_title="Mês",
+    yaxis_title="Turnover (%)",
+    hovermode="x unified"
+)
+st.plotly_chart(fig_turnover_mensal, use_container_width=True)
 
 # =========================
 # CÁLCULO DO TRI (Turnover Risk Index)
