@@ -86,9 +86,6 @@ tab_overview, tab_headcount, tab_turnover, tab_risco, tab_ia = st.tabs([
 ])
 
 # =========================
-# 0️⃣ VISÃO GERAL (EXECUTIVE SUMMARY)
-# =========================
-# =========================
 # 0️⃣ VISÃO GERAL (EXECUTIVE SUMMARY - SAFE VERSION)
 # =========================
 with tab_overview:
@@ -150,16 +147,16 @@ with tab_overview:
         for mes in meses:
             ativos_mes = df[(df[adm_col] <= mes) & ((df[desl_col].isna()) | (df[desl_col] > mes))]
             desligados_mes = df[(df[desl_col].notna()) & (df[desl_col].dt.to_period("M") == mes.to_period("M"))]
-            ativos = len(ativos_mes)
+            ativos_qtd = len(ativos_mes)
             deslig_total = len(desligados_mes)
             if motivo_col:
                 deslig_vol = desligados_mes[motivo_col].astype(str).str.contains("Pedido", case=False, na=False).sum()
             else:
                 deslig_vol = 0
             deslig_invol = deslig_total - deslig_vol
-            turnover_total = (deslig_total / ativos) * 100 if ativos > 0 else 0
-            turnover_vol = (deslig_vol / ativos) * 100 if ativos > 0 else 0
-            turnover_invol = (deslig_invol / ativos) * 100 if ativos > 0 else 0
+            turnover_total = (deslig_total / ativos_qtd) * 100 if ativos_qtd > 0 else 0
+            turnover_vol = (deslig_vol / ativos_qtd) * 100 if ativos_qtd > 0 else 0
+            turnover_invol = (deslig_invol / ativos_qtd) * 100 if ativos_qtd > 0 else 0
             turnover_mensal.append([turnover_total, turnover_vol, turnover_invol])
 
         turnover_df = pd.DataFrame(turnover_mensal, columns=["total", "vol", "invol"])
@@ -174,68 +171,69 @@ with tab_overview:
     # ======================
     try:
         df_desligados = df[~df["ativo"]].copy()
-        df_desligados["tenure_meses"] = (df_desligados[desl_col] - df_desligados[adm_col]).dt.days / 30
-        tenure_total = round(df_desligados["tenure_meses"].mean(), 1)
-        tenure_vol = round(df_desligados.loc[df_desligados[motivo_col].astype(str).str.contains("Pedido", case=False, na=False), "tenure_meses"].mean(), 1)
-        tenure_invol = round(df_desligados.loc[~df_desligados[motivo_col].astype(str).str.contains("Pedido", case=False, na=False), "tenure_meses"].mean(), 1)
-        tenure_ativos = round(df.loc[df["ativo"], "tempo_casa"].mean(), 1)
+        if desl_col and adm_col:
+            df_desligados["tenure_meses"] = (df_desligados[desl_col] - df_desligados[adm_col]).dt.days / 30
+            tenure_total = round(df_desligados["tenure_meses"].mean(), 1)
+            tenure_vol = round(df_desligados.loc[df_desligados[motivo_col].astype(str).str.contains("Pedido", case=False, na=False), "tenure_meses"].mean(), 1) if motivo_col else "—"
+            tenure_invol = round(df_desligados.loc[~df_desligados[motivo_col].astype(str).str.contains("Pedido", case=False, na=False), "tenure_meses"].mean(), 1) if motivo_col else "—"
+        else:
+            tenure_total = tenure_vol = tenure_invol = "—"
+        tenure_ativos = round(df.loc[df["ativo"], "tempo_casa"].mean(), 1) if "tempo_casa" in df.columns else "—"
     except Exception:
         tenure_total = tenure_vol = tenure_invol = tenure_ativos = "—"
 
-# ======================
-# RISCO (TRI)
-# ======================
-try:
-    now = pd.Timestamp.now()
+    # ======================
+    # RISCO (TRI)
+    # ======================
+    try:
+        now = pd.Timestamp.now()
 
-    # --- cálculo seguro dos tempos
-    promo_col = col(df, "ultima promoção")
-    merito_col = col(df, "ultimo mérito")
-    df["meses_desde_promocao"] = (now - pd.to_datetime(df[promo_col], errors="coerce")).dt.days / 30 if promo_col else 0
-    df["meses_desde_merito"] = (now - pd.to_datetime(df[merito_col], errors="coerce")).dt.days / 30 if merito_col else 0
+        # datas seguras
+        promo_col = col(df, "ultima promoção")
+        merito_col = col(df, "ultimo mérito")
+        df["meses_desde_promocao"] = (now - pd.to_datetime(df[promo_col], errors="coerce")).dt.days / 30 if promo_col else 0
+        df["meses_desde_merito"] = (now - pd.to_datetime(df[merito_col], errors="coerce")).dt.days / 30 if merito_col else 0
 
-    # --- criação segura da coluna de tamanho de equipe
-    gestor_col = col(df, "matricula do gestor")
-    if gestor_col:
-        gestor_size = df.groupby(gestor_col)["matricula"].count().rename("tamanho_equipe")
-        df = df.merge(gestor_size, left_on=gestor_col, right_index=True, how="left")
-    if "tamanho_equipe" not in df.columns:
-        df["tamanho_equipe"] = 0  # evita KeyError
+        # tamanho de equipe seguro
+        gestor_col = col(df, "matricula do gestor")
+        if gestor_col:
+            gestor_size = df.groupby(gestor_col)["matricula"].count().rename("tamanho_equipe")
+            df = df.merge(gestor_size, left_on=gestor_col, right_index=True, how="left")
+        if "tamanho_equipe" not in df.columns:
+            df["tamanho_equipe"] = 0
 
-    # --- performance
-    perf_col = col(df, "avaliação")
-    perf_map = {"excepcional": 10, "acima do esperado": 7, "dentro do esperado": 4, "abaixo do esperado": 1}
-    df["score_perf_raw"] = df[perf_col].str.lower().map(perf_map).fillna(4) if perf_col else 4
+        # performance
+        perf_col = col(df, "avaliação")
+        perf_map = {"excepcional": 10, "acima do esperado": 7, "dentro do esperado": 4, "abaixo do esperado": 1}
+        df["score_perf_raw"] = df[perf_col].str.lower().map(perf_map).fillna(4) if perf_col else 4
 
-    # --- normalização e composição TRI
-    def norm_0_1(s):
-        s = s.astype(float)
-        maxv = s.max(skipna=True)
-        return s / maxv if pd.notna(maxv) and maxv not in [0, np.inf] else s.fillna(0).mul(0)
+        def norm_0_1(s):
+            s = s.astype(float)
+            maxv = s.max(skipna=True)
+            return s / maxv if pd.notna(maxv) and maxv not in [0, np.inf] else s.fillna(0).mul(0)
 
-    df["score_perf_inv"] = 1 - norm_0_1(df["score_perf_raw"])
-    df["score_tempo_promo"] = norm_0_1(df["meses_desde_promocao"])
-    df["score_tempo_casa"] = norm_0_1(df["tempo_casa"])
-    df["score_merito"] = norm_0_1(df["meses_desde_merito"])
-    df["score_tamanho_eq"] = norm_0_1(df["tamanho_equipe"])
+        df["score_perf_inv"] = 1 - norm_0_1(df["score_perf_raw"])
+        df["score_tempo_promo"] = norm_0_1(df["meses_desde_promocao"])
+        df["score_tempo_casa"] = norm_0_1(df["tempo_casa"]) if "tempo_casa" in df.columns else 0
+        df["score_merito"] = norm_0_1(df["meses_desde_merito"])
+        df["score_tamanho_eq"] = norm_0_1(df["tamanho_equipe"])
 
-    # --- peso e risco
-    df["risco_turnover"] = (
-        0.30 * df["score_perf_inv"] +
-        0.25 * df["score_tempo_promo"] +
-        0.15 * df["score_tempo_casa"] +
-        0.15 * df["score_tamanho_eq"] +
-        0.15 * df["score_merito"]
-    ) * 100
+        df["risco_turnover"] = (
+            0.30 * df["score_perf_inv"] +
+            0.25 * df["score_tempo_promo"] +
+            0.15 * df["score_tempo_casa"] +
+            0.15 * df["score_tamanho_eq"] +
+            0.15 * df["score_merito"]
+        ) * 100
 
-    risco_medio = round(df["risco_turnover"].mean(), 1)
-    risco_alto = round((df["risco_turnover"] > 60).mean() * 100, 1)
+        risco_medio = round(df["risco_turnover"].mean(), 1)
+        risco_alto = round((df["risco_turnover"] > 60).mean() * 100, 1)
 
-except Exception as e:
-    st.warning(f"⚠️ Não foi possível calcular o risco (TRI): {e}")
-    if "tamanho_equipe" not in df.columns:
-        df["tamanho_equipe"] = 0
-    risco_medio = risco_alto = "—"
+    except Exception as e:
+        st.warning(f"⚠️ Não foi possível calcular o risco (TRI): {e}")
+        if "tamanho_equipe" not in df.columns:
+            df["tamanho_equipe"] = 0
+        risco_medio = risco_alto = "—"
 
     # ======================
     # EXIBIÇÃO DOS KPIs
@@ -267,7 +265,7 @@ except Exception as e:
 
     st.divider()
     st.markdown(f"""
-    📊 *Resumo executivo*: O headcount atual é de **{total_ativos}** colaboradores, com turnover médio de **{turnover_total_medio}%** 
+    📊 *Resumo executivo*: O headcount atual é de **{total_ativos}** colaboradores, com turnover médio de **{turnover_total_medio}%**
     ({turnover_vol_medio}% voluntário e {turnover_invol_medio}% involuntário).  
     O tempo médio até o desligamento é de **{tenure_total} meses**, e o risco médio de saída (TRI) está em **{risco_medio}**, 
     com **{risco_alto}%** dos colaboradores em alto risco.*
