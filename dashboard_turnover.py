@@ -79,9 +79,127 @@ if dept_sel != "Todos":
     df = df[df["departamento"] == dept_sel]
 
 # =========================
-# ABAS
+# ABAS (inclui Visão Geral)
 # =========================
-tab_headcount, tab_turnover, tab_risco, tab_ia = st.tabs(["👥 Headcount", "🔄 Turnover", "🔮 Risco (TRI)", "🤖 Insights com IA"])
+tab_overview, tab_headcount, tab_turnover, tab_risco, tab_ia = st.tabs([
+    "📍 Visão Geral", "👥 Headcount", "🔄 Turnover", "🔮 Risco (TRI)", "🤖 Insights com IA"
+])
+
+# =========================
+# 0️⃣ VISÃO GERAL (NOVA)
+# =========================
+with tab_overview:
+    st.subheader("📍 Visão Geral — KPIs Consolidados")
+
+    # --- HEADCOUNT ATUAL
+    ativos = df[df["ativo"]]
+    total_ativos = len(ativos)
+    total_departamentos = ativos["departamento"].nunique()
+
+    # --- TURNOVER MÉDIO
+    df["mes_ano_desligamento"] = df["data de desligamento"].dt.to_period("M").astype(str)
+    data_min = df["data de admissão"].min()
+    data_max = df["data de desligamento"].max() if df["data de desligamento"].notna().any() else datetime.now()
+    meses = pd.date_range(data_min, data_max, freq="MS")
+
+    turnover_mensal = []
+    for mes in meses:
+        ativos_mes = df[(df["data de admissão"] <= mes) & ((df["data de desligamento"].isna()) | (df["data de desligamento"] > mes))]
+        desligados_mes = df[(df["data de desligamento"].notna()) & (df["data de desligamento"].dt.to_period("M") == mes.to_period("M"))]
+
+        ativos = len(ativos_mes)
+        deslig_total = len(desligados_mes)
+        deslig_vol = desligados_mes["motivo_voluntario"].sum()
+        deslig_invol = deslig_total - deslig_vol
+
+        turnover_total = (deslig_total / ativos) * 100 if ativos > 0 else 0
+        turnover_vol = (deslig_vol / ativos) * 100 if ativos > 0 else 0
+        turnover_invol = (deslig_invol / ativos) * 100 if ativos > 0 else 0
+
+        turnover_mensal.append({
+            "Mês": mes.strftime("%Y-%m"),
+            "Turnover Total (%)": turnover_total,
+            "Turnover Voluntário (%)": turnover_vol,
+            "Turnover Involuntário (%)": turnover_invol
+        })
+    turnover_df = pd.DataFrame(turnover_mensal)
+    turnover_total_medio = round(turnover_df["Turnover Total (%)"].mean(), 1)
+    turnover_vol_medio = round(turnover_df["Turnover Voluntário (%)"].mean(), 1)
+    turnover_invol_medio = round(turnover_df["Turnover Involuntário (%)"].mean(), 1)
+
+    # --- TENURE MÉDIO
+    df_desligados = df[~df["ativo"]].copy()
+    df_desligados["tenure_meses"] = (df_desligados["data de desligamento"] - df_desligados["data de admissão"]).dt.days / 30
+    tenure_total = round(df_desligados["tenure_meses"].mean(), 1)
+    tenure_vol = round(df_desligados.loc[df_desligados["motivo_voluntario"], "tenure_meses"].mean(), 1)
+    tenure_invol = round(df_desligados.loc[~df_desligados["motivo_voluntario"], "tenure_meses"].mean(), 1)
+    tenure_ativos = round(df.loc[df["ativo"], "tempo_casa"].mean(), 1)
+
+    # --- RISCO (TRI)
+    now = pd.Timestamp.now()
+    df["meses_desde_promocao"] = (now - df["ultima promoção"]).dt.days / 30
+    df["meses_desde_merito"] = (now - df["ultimo mérito"]).dt.days / 30
+    gestor_size = df.groupby("matricula do gestor")["matricula"].count().rename("tamanho_equipe")
+    df = df.merge(gestor_size, left_on="matricula do gestor", right_index=True, how="left")
+
+    perf_map = {"excepcional": 10, "acima do esperado": 7, "dentro do esperado": 4, "abaixo do esperado": 1}
+    df["score_perf_raw"] = df["avaliação"].str.lower().map(perf_map).fillna(4)
+    def norm_0_1(s):
+        s = s.astype(float)
+        maxv = s.max(skipna=True)
+        return s / maxv if pd.notna(maxv) and maxv not in [0, np.inf] else s.fillna(0).mul(0)
+    df["score_perf_inv"] = 1 - norm_0_1(df["score_perf_raw"])
+    df["score_tempo_promo"] = norm_0_1(df["meses_desde_promocao"].fillna(0))
+    df["score_tempo_casa"] = norm_0_1(df["tempo_casa"].fillna(0))
+    df["score_merito"] = norm_0_1(df["meses_desde_merito"].fillna(0))
+    df["score_tamanho_eq"] = norm_0_1(df["tamanho_equipe"].fillna(0))
+
+    df["risco_turnover"] = (
+        0.30 * df["score_perf_inv"] +
+        0.25 * df["score_tempo_promo"] +
+        0.15 * df["score_tempo_casa"] +
+        0.15 * df["score_tamanho_eq"] +
+        0.15 * df["score_merito"]
+    ) * 100
+    risco_medio = round(df["risco_turnover"].mean(), 1)
+    risco_alto = round((df["risco_turnover"] > 60).mean() * 100, 1)
+
+    # --- KPIs GERAIS
+    st.markdown("### 📊 KPIs Principais")
+    c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
+    c1.metric("👥 Headcount Atual", total_ativos)
+    c2.metric("🏢 Departamentos", total_departamentos)
+    c3.metric("📉 Turnover Médio", f"{turnover_total_medio}%")
+    c4.metric("🤝 Voluntário", f"{turnover_vol_medio}%")
+    c5.metric("📋 Involuntário", f"{turnover_invol_medio}%")
+    c6.metric("⏱️ Tenure Médio", f"{tenure_total}m")
+    c7.metric("⚠️ Risco Médio (TRI)", f"{risco_medio}")
+    c8.metric("🚨 % Risco Alto", f"{risco_alto}%")
+
+    st.divider()
+    st.markdown("### 📈 Tendência de Turnover (Últimos 12 Meses)")
+    turnover_df = turnover_df.tail(12)
+    fig_overview = go.Figure()
+    fig_overview.add_trace(go.Scatter(
+        x=turnover_df["Mês"], y=turnover_df["Turnover Total (%)"],
+        mode="lines+markers", name="Total", line=dict(color="#00FFFF", width=3)
+    ))
+    fig_overview.add_trace(go.Scatter(
+        x=turnover_df["Mês"], y=turnover_df["Turnover Voluntário (%)"],
+        mode="lines+markers", name="Voluntário", line=dict(color="#FFD700", dash="dash")
+    ))
+    fig_overview.add_trace(go.Scatter(
+        x=turnover_df["Mês"], y=turnover_df["Turnover Involuntário (%)"],
+        mode="lines+markers", name="Involuntário", line=dict(color="#FF4500", dash="dot")
+    ))
+    fig_overview.update_layout(
+        template="plotly_dark",
+        height=400,
+        xaxis_title="Mês",
+        yaxis_title="Turnover (%)",
+        hovermode="x unified"
+    )
+    st.plotly_chart(fig_overview, use_container_width=True)
 
 # =========================
 # 1️⃣ HEADCOUNT
