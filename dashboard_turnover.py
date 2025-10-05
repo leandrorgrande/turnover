@@ -276,4 +276,25 @@ if st.button("🤖 Gerar Análise com IA"):
             prompt = f"""
             Analise os dados de headcount, turnover e risco:
             - Headcount atual: {total_ativos}
-            - Turn
+            - Turnover médio total: {turnover_medio_total}%
+            - Voluntário: {turnover_medio_vol}%, Involuntário: {turnover_medio_invol}%
+            - Tempo médio de casa: {tenure_total}m
+            - Risco médio (TRI): {avg_risk}, {pct_high}% alto
+            Gere 3 a 4 frases com análise executiva, destacando possíveis causas e recomendações.
+            """
+            response = openai.chat.completions.create(
+                model="gpt-4-turbo",
+                messages=[
+                    {"role": "system", "content": "Você é um analista sênior de People Analytics."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.6
+            )
+            texto = response.choices[0].message.content
+            st.success(texto)
+        except Exception as e:
+            st.error(f"Erro ao gerar análise: {e}")
+else:
+    st.info("Clique em **Gerar Análise com IA** para gerar insights qualitativos.")
+
+st.caption("• Versão 5.0 • Headcount + Turnover + Risco + IA sob demanda.")
