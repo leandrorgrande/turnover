@@ -86,18 +86,45 @@ tab_overview, tab_headcount, tab_turnover, tab_risco, tab_ia = st.tabs([
 ])
 
 # =========================
-# 0️⃣ VISÃO GERAL (NOVA)
+# 0️⃣ VISÃO GERAL (EXECUTIVE SUMMARY)
 # =========================
 with tab_overview:
-    st.subheader("📍 Visão Geral — KPIs Consolidados")
+    st.subheader("📍 Visão Geral — KPIs Consolidados de People Analytics")
+    st.caption("Resumo executivo com os principais indicadores de Headcount, Turnover, Tenure e Risco de Saída (TRI)")
 
-    # --- HEADCOUNT ATUAL
+    # ======================
+    # HEADCOUNT
+    # ======================
     ativos = df[df["ativo"]]
     total_ativos = len(ativos)
     total_departamentos = ativos["departamento"].nunique()
 
-    # --- TURNOVER MÉDIO
-    df["mes_ano_desligamento"] = df["data de desligamento"].dt.to_period("M").astype(str)
+    # tipo de contrato e diversidade
+    if "tipo_contrato" in ativos.columns:
+        total_clt = (ativos["tipo_contrato"].str.upper() == "CLT").sum()
+        total_pj = (ativos["tipo_contrato"].str.upper() == "PJ").sum()
+    else:
+        total_clt = total_pj = 0
+
+    pct_clt = round((total_clt / total_ativos) * 100, 1) if total_ativos else 0
+    pct_pj = round((total_pj / total_ativos) * 100, 1) if total_ativos else 0
+
+    if "genero" in ativos.columns:
+        genero_counts = ativos["genero"].value_counts(normalize=True) * 100
+        pct_fem = round(genero_counts.get("Feminino", 0), 1)
+        pct_masc = round(genero_counts.get("Masculino", 0), 1)
+    else:
+        pct_fem = pct_masc = 0
+
+    if "cargo" in ativos.columns:
+        cargos_lideranca = ativos["cargo"].str.lower().str.contains("coordenador|gerente|diretor", na=False)
+        pct_lideranca = round((cargos_lideranca.sum() / total_ativos) * 100, 1)
+    else:
+        pct_lideranca = 0
+
+    # ======================
+    # TURNOVER
+    # ======================
     data_min = df["data de admissão"].min()
     data_max = df["data de desligamento"].max() if df["data de desligamento"].notna().any() else datetime.now()
     meses = pd.date_range(data_min, data_max, freq="MS")
@@ -106,7 +133,6 @@ with tab_overview:
     for mes in meses:
         ativos_mes = df[(df["data de admissão"] <= mes) & ((df["data de desligamento"].isna()) | (df["data de desligamento"] > mes))]
         desligados_mes = df[(df["data de desligamento"].notna()) & (df["data de desligamento"].dt.to_period("M") == mes.to_period("M"))]
-
         ativos = len(ativos_mes)
         deslig_total = len(desligados_mes)
         deslig_vol = desligados_mes["motivo_voluntario"].sum()
@@ -115,19 +141,16 @@ with tab_overview:
         turnover_total = (deslig_total / ativos) * 100 if ativos > 0 else 0
         turnover_vol = (deslig_vol / ativos) * 100 if ativos > 0 else 0
         turnover_invol = (deslig_invol / ativos) * 100 if ativos > 0 else 0
+        turnover_mensal.append([turnover_total, turnover_vol, turnover_invol])
 
-        turnover_mensal.append({
-            "Mês": mes.strftime("%Y-%m"),
-            "Turnover Total (%)": turnover_total,
-            "Turnover Voluntário (%)": turnover_vol,
-            "Turnover Involuntário (%)": turnover_invol
-        })
-    turnover_df = pd.DataFrame(turnover_mensal)
-    turnover_total_medio = round(turnover_df["Turnover Total (%)"].mean(), 1)
-    turnover_vol_medio = round(turnover_df["Turnover Voluntário (%)"].mean(), 1)
-    turnover_invol_medio = round(turnover_df["Turnover Involuntário (%)"].mean(), 1)
+    turnover_df = pd.DataFrame(turnover_mensal, columns=["total", "vol", "invol"])
+    turnover_total_medio = round(turnover_df["total"].mean(), 1)
+    turnover_vol_medio = round(turnover_df["vol"].mean(), 1)
+    turnover_invol_medio = round(turnover_df["invol"].mean(), 1)
 
-    # --- TENURE MÉDIO
+    # ======================
+    # TENURE
+    # ======================
     df_desligados = df[~df["ativo"]].copy()
     df_desligados["tenure_meses"] = (df_desligados["data de desligamento"] - df_desligados["data de admissão"]).dt.days / 30
     tenure_total = round(df_desligados["tenure_meses"].mean(), 1)
@@ -135,7 +158,9 @@ with tab_overview:
     tenure_invol = round(df_desligados.loc[~df_desligados["motivo_voluntario"], "tenure_meses"].mean(), 1)
     tenure_ativos = round(df.loc[df["ativo"], "tempo_casa"].mean(), 1)
 
-    # --- RISCO (TRI)
+    # ======================
+    # RISCO (TRI)
+    # ======================
     now = pd.Timestamp.now()
     df["meses_desde_promocao"] = (now - df["ultima promoção"]).dt.days / 30
     df["meses_desde_merito"] = (now - df["ultimo mérito"]).dt.days / 30
@@ -153,7 +178,6 @@ with tab_overview:
     df["score_tempo_casa"] = norm_0_1(df["tempo_casa"].fillna(0))
     df["score_merito"] = norm_0_1(df["meses_desde_merito"].fillna(0))
     df["score_tamanho_eq"] = norm_0_1(df["tamanho_equipe"].fillna(0))
-
     df["risco_turnover"] = (
         0.30 * df["score_perf_inv"] +
         0.25 * df["score_tempo_promo"] +
@@ -164,42 +188,39 @@ with tab_overview:
     risco_medio = round(df["risco_turnover"].mean(), 1)
     risco_alto = round((df["risco_turnover"] > 60).mean() * 100, 1)
 
-    # --- KPIs GERAIS
-    st.markdown("### 📊 KPIs Principais")
-    c1, c2, c3, c4, c5, c6, c7, c8 = st.columns(8)
-    c1.metric("👥 Headcount Atual", total_ativos)
-    c2.metric("🏢 Departamentos", total_departamentos)
-    c3.metric("📉 Turnover Médio", f"{turnover_total_medio}%")
-    c4.metric("🤝 Voluntário", f"{turnover_vol_medio}%")
-    c5.metric("📋 Involuntário", f"{turnover_invol_medio}%")
-    c6.metric("⏱️ Tenure Médio", f"{tenure_total}m")
-    c7.metric("⚠️ Risco Médio (TRI)", f"{risco_medio}")
-    c8.metric("🚨 % Risco Alto", f"{risco_alto}%")
+    # ======================
+    # EXIBIÇÃO DOS KPIs
+    # ======================
+    st.markdown("### 👥 Headcount e Estrutura")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total Ativos", total_ativos)
+    c2.metric("% CLT", f"{pct_clt}%")
+    c3.metric("% Feminino", f"{pct_fem}%")
+    c4.metric("% Liderança", f"{pct_lideranca}%")
+
+    st.markdown("### 🔄 Turnover e Retenção")
+    c5, c6, c7 = st.columns(3)
+    c5.metric("Turnover Médio Total", f"{turnover_total_medio}%")
+    c6.metric("Voluntário", f"{turnover_vol_medio}%")
+    c7.metric("Involuntário", f"{turnover_invol_medio}%")
+
+    st.markdown("### ⏳ Tenure (Tempo Médio até Desligamento)")
+    c8, c9, c10, c11 = st.columns(4)
+    c8.metric("Tenure Total", f"{tenure_total}m")
+    c9.metric("Voluntário", f"{tenure_vol}m")
+    c10.metric("Involuntário", f"{tenure_invol}m")
+    c11.metric("Ativos", f"{tenure_ativos}m")
+
+    st.markdown("### 🔮 Risco de Saída (TRI)")
+    c12, c13 = st.columns(2)
+    c12.metric("Risco Médio", f"{risco_medio}")
+    c13.metric("% em Risco Alto", f"{risco_alto}%")
 
     st.divider()
-    st.markdown("### 📈 Tendência de Turnover (Últimos 12 Meses)")
-    turnover_df = turnover_df.tail(12)
-    fig_overview = go.Figure()
-    fig_overview.add_trace(go.Scatter(
-        x=turnover_df["Mês"], y=turnover_df["Turnover Total (%)"],
-        mode="lines+markers", name="Total", line=dict(color="#00FFFF", width=3)
-    ))
-    fig_overview.add_trace(go.Scatter(
-        x=turnover_df["Mês"], y=turnover_df["Turnover Voluntário (%)"],
-        mode="lines+markers", name="Voluntário", line=dict(color="#FFD700", dash="dash")
-    ))
-    fig_overview.add_trace(go.Scatter(
-        x=turnover_df["Mês"], y=turnover_df["Turnover Involuntário (%)"],
-        mode="lines+markers", name="Involuntário", line=dict(color="#FF4500", dash="dot")
-    ))
-    fig_overview.update_layout(
-        template="plotly_dark",
-        height=400,
-        xaxis_title="Mês",
-        yaxis_title="Turnover (%)",
-        hovermode="x unified"
-    )
-    st.plotly_chart(fig_overview, use_container_width=True)
+    st.markdown("📊 *Resumo executivo*: a visão consolidada indica estabilidade moderada de headcount com turnover médio de "
+                f"{turnover_total_medio}%, sendo {turnover_vol_medio}% voluntário. O tempo médio até o desligamento é de "
+                f"{tenure_total} meses, e o risco médio de saída está em {risco_medio}, com {risco_alto}% da força de trabalho "
+                f"em faixa de risco elevado.*")
 
 # =========================
 # 1️⃣ HEADCOUNT
