@@ -182,40 +182,60 @@ with tab_overview:
     except Exception:
         tenure_total = tenure_vol = tenure_invol = tenure_ativos = "—"
 
-    # ======================
-    # RISCO (TRI)
-    # ======================
-    try:
-        now = pd.Timestamp.now()
-        df["meses_desde_promocao"] = (now - pd.to_datetime(df[col(df, "ultima promoção")], errors="coerce")).dt.days / 30
-        df["meses_desde_merito"] = (now - pd.to_datetime(df[col(df, "ultimo mérito")], errors="coerce")).dt.days / 30
-        gestor_col = col(df, "matricula do gestor")
-        if gestor_col:
-            gestor_size = df.groupby(gestor_col)["matricula"].count().rename("tamanho_equipe")
-            df = df.merge(gestor_size, left_on=gestor_col, right_index=True, how="left")
-        perf_col = col(df, "avaliação")
-        perf_map = {"excepcional": 10, "acima do esperado": 7, "dentro do esperado": 4, "abaixo do esperado": 1}
-        df["score_perf_raw"] = df[perf_col].str.lower().map(perf_map).fillna(4) if perf_col else 4
-        def norm_0_1(s):
-            s = s.astype(float)
-            maxv = s.max(skipna=True)
-            return s / maxv if pd.notna(maxv) and maxv not in [0, np.inf] else s.fillna(0).mul(0)
-        df["score_perf_inv"] = 1 - norm_0_1(df["score_perf_raw"])
-        df["score_tempo_promo"] = norm_0_1(df["meses_desde_promocao"].fillna(0))
-        df["score_tempo_casa"] = norm_0_1(df["tempo_casa"].fillna(0))
-        df["score_merito"] = norm_0_1(df["meses_desde_merito"].fillna(0))
-        df["score_tamanho_eq"] = norm_0_1(df.get("tamanho_equipe", 0))
-        df["risco_turnover"] = (
-            0.30 * df["score_perf_inv"] +
-            0.25 * df["score_tempo_promo"] +
-            0.15 * df["score_tempo_casa"] +
-            0.15 * df["score_tamanho_eq"] +
-            0.15 * df["score_merito"]
-        ) * 100
-        risco_medio = round(df["risco_turnover"].mean(), 1)
-        risco_alto = round((df["risco_turnover"] > 60).mean() * 100, 1)
-    except Exception:
-        risco_medio = risco_alto = "—"
+# ======================
+# RISCO (TRI)
+# ======================
+try:
+    now = pd.Timestamp.now()
+
+    # --- cálculo seguro dos tempos
+    promo_col = col(df, "ultima promoção")
+    merito_col = col(df, "ultimo mérito")
+    df["meses_desde_promocao"] = (now - pd.to_datetime(df[promo_col], errors="coerce")).dt.days / 30 if promo_col else 0
+    df["meses_desde_merito"] = (now - pd.to_datetime(df[merito_col], errors="coerce")).dt.days / 30 if merito_col else 0
+
+    # --- criação segura da coluna de tamanho de equipe
+    gestor_col = col(df, "matricula do gestor")
+    if gestor_col:
+        gestor_size = df.groupby(gestor_col)["matricula"].count().rename("tamanho_equipe")
+        df = df.merge(gestor_size, left_on=gestor_col, right_index=True, how="left")
+    if "tamanho_equipe" not in df.columns:
+        df["tamanho_equipe"] = 0  # evita KeyError
+
+    # --- performance
+    perf_col = col(df, "avaliação")
+    perf_map = {"excepcional": 10, "acima do esperado": 7, "dentro do esperado": 4, "abaixo do esperado": 1}
+    df["score_perf_raw"] = df[perf_col].str.lower().map(perf_map).fillna(4) if perf_col else 4
+
+    # --- normalização e composição TRI
+    def norm_0_1(s):
+        s = s.astype(float)
+        maxv = s.max(skipna=True)
+        return s / maxv if pd.notna(maxv) and maxv not in [0, np.inf] else s.fillna(0).mul(0)
+
+    df["score_perf_inv"] = 1 - norm_0_1(df["score_perf_raw"])
+    df["score_tempo_promo"] = norm_0_1(df["meses_desde_promocao"])
+    df["score_tempo_casa"] = norm_0_1(df["tempo_casa"])
+    df["score_merito"] = norm_0_1(df["meses_desde_merito"])
+    df["score_tamanho_eq"] = norm_0_1(df["tamanho_equipe"])
+
+    # --- peso e risco
+    df["risco_turnover"] = (
+        0.30 * df["score_perf_inv"] +
+        0.25 * df["score_tempo_promo"] +
+        0.15 * df["score_tempo_casa"] +
+        0.15 * df["score_tamanho_eq"] +
+        0.15 * df["score_merito"]
+    ) * 100
+
+    risco_medio = round(df["risco_turnover"].mean(), 1)
+    risco_alto = round((df["risco_turnover"] > 60).mean() * 100, 1)
+
+except Exception as e:
+    st.warning(f"⚠️ Não foi possível calcular o risco (TRI): {e}")
+    if "tamanho_equipe" not in df.columns:
+        df["tamanho_equipe"] = 0
+    risco_medio = risco_alto = "—"
 
     # ======================
     # EXIBIÇÃO DOS KPIs
