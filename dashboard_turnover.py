@@ -446,27 +446,58 @@ with tab_turnover:
 # =========================
 with tab_risco:
     st.subheader("🔮 Risco de Turnover (TRI)")
+
     now = pd.Timestamp.now()
-    df["meses_desde_promocao"] = (now - df["ultima promoção"]).dt.days / 30
-    df["meses_desde_merito"] = (now - df["ultimo mérito"]).dt.days / 30
 
-    gestor_size = df.groupby("matricula do gestor")["matricula"].count().rename("tamanho_equipe")
-    df = df.merge(gestor_size, left_on="matricula do gestor", right_index=True, how="left")
+    # --- conversões seguras
+    if "ultima promoção" in df.columns:
+        df["meses_desde_promocao"] = (now - pd.to_datetime(df["ultima promoção"], errors="coerce")).dt.days / 30
+    else:
+        df["meses_desde_promocao"] = 0
 
+    if "ultimo mérito" in df.columns:
+        df["meses_desde_merito"] = (now - pd.to_datetime(df["ultimo mérito"], errors="coerce")).dt.days / 30
+    else:
+        df["meses_desde_merito"] = 0
+
+    # --- garantir existência da coluna tamanho_equipe
+    if "tamanho_equipe" not in df.columns:
+        df["tamanho_equipe"] = 0
+
+    # --- calcular tamanho da equipe se a coluna de gestor existir
+    if "matricula do gestor" in df.columns:
+        try:
+            gestor_size = df.groupby("matricula do gestor")["matricula"].count().rename("tamanho_calc")
+            df = df.merge(gestor_size, left_on="matricula do gestor", right_index=True, how="left")
+            df["tamanho_equipe"] = df["tamanho_calc"].fillna(df["tamanho_equipe"])
+            df.drop(columns=["tamanho_calc"], inplace=True, errors="ignore")
+        except Exception:
+            st.warning("⚠️ Não foi possível calcular o tamanho das equipes, usando zeros como padrão.")
+    else:
+        st.warning("⚠️ Coluna 'matricula do gestor' ausente — tamanho de equipe definido como 0.")
+
+    # --- performance
     perf_map = {"excepcional": 10, "acima do esperado": 7, "dentro do esperado": 4, "abaixo do esperado": 1}
-    df["score_perf_raw"] = df["avaliação"].str.lower().map(perf_map).fillna(4)
+    if "avaliação" in df.columns:
+        df["score_perf_raw"] = df["avaliação"].astype(str).str.lower().map(perf_map).fillna(4)
+    else:
+        df["score_perf_raw"] = 4
 
+    # --- função normalizadora
     def norm_0_1(s):
         s = s.astype(float)
-        maxv = s.max(skipna=True)
-        return s / maxv if pd.notna(maxv) and maxv not in [0, np.inf] else s.fillna(0).mul(0)
+        if s.empty or s.max(skipna=True) in [0, np.inf, np.nan]:
+            return s.fillna(0)
+        return (s - s.min(skipna=True)) / (s.max(skipna=True) - s.min(skipna=True))
 
+    # --- cálculos de scores
     df["score_perf_inv"] = 1 - norm_0_1(df["score_perf_raw"])
     df["score_tempo_promo"] = norm_0_1(df["meses_desde_promocao"].fillna(0))
-    df["score_tempo_casa"] = norm_0_1(df["tempo_casa"].fillna(0))
+    df["score_tempo_casa"] = norm_0_1(df["tempo_casa"].fillna(0)) if "tempo_casa" in df.columns else 0
     df["score_merito"] = norm_0_1(df["meses_desde_merito"].fillna(0))
     df["score_tamanho_eq"] = norm_0_1(df["tamanho_equipe"].fillna(0))
 
+    # --- cálculo do índice composto TRI
     df["risco_turnover"] = (
         0.30 * df["score_perf_inv"] +
         0.25 * df["score_tempo_promo"] +
@@ -474,8 +505,10 @@ with tab_risco:
         0.15 * df["score_tamanho_eq"] +
         0.15 * df["score_merito"]
     ) * 100
+
     df["risco_turnover"] = df["risco_turnover"].clip(0, 100)
 
+    # --- métricas principais
     avg_risk = round(df["risco_turnover"].mean(), 1)
     pct_high = round((df["risco_turnover"] > 60).mean() * 100, 1)
 
@@ -483,13 +516,31 @@ with tab_risco:
     colR1.metric("⚠️ Risco Médio (TRI)", avg_risk)
     colR2.metric("🚨 % Risco Alto", f"{pct_high}%")
 
+    # --- risco por tempo sem promoção
     bins = [0, 3, 6, 12, 24, np.inf]
     labels = ["0-3m", "3-6m", "6-12m", "12-24m", "+24m"]
     df["faixa_tempo_sem_promo"] = pd.cut(df["meses_desde_promocao"].fillna(0), bins=bins, labels=labels)
 
-    risco_por_faixa = df.groupby("faixa_tempo_sem_promo")["risco_turnover"].mean().reset_index()
-    fig_risco = px.line(risco_por_faixa, x="faixa_tempo_sem_promo", y="risco_turnover", markers=True, color_discrete_sequence=["#00FFFF"])
-    fig_risco.update_layout(template="plotly_dark", title="📈 Risco Médio por Tempo sem Promoção")
+    risco_por_faixa = (
+        df.groupby("faixa_tempo_sem_promo")["risco_turnover"]
+        .mean()
+        .reset_index()
+        .rename(columns={"risco_turnover": "Risco Médio"})
+    )
+
+    fig_risco = px.line(
+        risco_por_faixa,
+        x="faixa_tempo_sem_promo",
+        y="Risco Médio",
+        markers=True,
+        color_discrete_sequence=["#00FFFF"]
+    )
+    fig_risco.update_layout(
+        template="plotly_dark",
+        title="📈 Risco Médio por Tempo sem Promoção",
+        xaxis_title="Faixa de Tempo sem Promoção",
+        yaxis_title="Risco Médio (0-100)"
+    )
     st.plotly_chart(fig_risco, use_container_width=True)
 
 # =========================
