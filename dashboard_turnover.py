@@ -128,24 +128,130 @@ with tab_headcount:
     st.plotly_chart(fig_area, use_container_width=True)
 
 # =========================
-# 2️⃣ TURNOVER
+# 2️⃣ TURNOVER (ANÁLISE COMPLETA)
 # =========================
 with tab_turnover:
-    st.subheader("🔄 Turnover e Tenure Médio")
-    df["mes_desligamento"] = df["data de desligamento"].dt.to_period("M").astype(str)
+    st.subheader("🔄 Turnover e Tenure Médio — Análise Detalhada")
+
+    # --- preparar base
+    df["mes_ano_admissao"] = df["data de admissão"].dt.to_period("M").astype(str)
+    df["mes_ano_desligamento"] = df["data de desligamento"].dt.to_period("M").astype(str)
+
+    # --- períodos (mês a mês)
+    data_min = df["data de admissão"].min()
+    data_max = df["data de desligamento"].max() if df["data de desligamento"].notna().any() else datetime.now()
+    meses = pd.date_range(data_min, data_max, freq="MS")
+
+    turnover_mensal = []
+    for mes in meses:
+        ativos_mes = df[(df["data de admissão"] <= mes) & ((df["data de desligamento"].isna()) | (df["data de desligamento"] > mes))]
+        desligados_mes = df[(df["data de desligamento"].notna()) & (df["data de desligamento"].dt.to_period("M") == mes.to_period("M"))]
+
+        ativos = len(ativos_mes)
+        deslig_total = len(desligados_mes)
+        deslig_vol = desligados_mes["motivo_voluntario"].sum()
+        deslig_invol = deslig_total - deslig_vol
+
+        turnover_total = (deslig_total / ativos) * 100 if ativos > 0 else 0
+        turnover_vol = (deslig_vol / ativos) * 100 if ativos > 0 else 0
+        turnover_invol = (deslig_invol / ativos) * 100 if ativos > 0 else 0
+
+        turnover_mensal.append({
+            "Mês": mes.strftime("%Y-%m"),
+            "Ativos": ativos,
+            "Desligados": deslig_total,
+            "Voluntários": deslig_vol,
+            "Involuntários": deslig_invol,
+            "Turnover Total (%)": turnover_total,
+            "Turnover Voluntário (%)": turnover_vol,
+            "Turnover Involuntário (%)": turnover_invol
+        })
+
+    turnover_df = pd.DataFrame(turnover_mensal)
+
+    # --- KPIs principais
+    turnover_total_medio = round(turnover_df["Turnover Total (%)"].mean(), 1)
+    turnover_vol_medio = round(turnover_df["Turnover Voluntário (%)"].mean(), 1)
+    turnover_invol_medio = round(turnover_df["Turnover Involuntário (%)"].mean(), 1)
+    media_ativos = int(turnover_df["Ativos"].mean())
+    media_deslig = int(turnover_df["Desligados"].mean())
+
     df_desligados = df[~df["ativo"]].copy()
     df_desligados["tenure_meses"] = (df_desligados["data de desligamento"] - df_desligados["data de admissão"]).dt.days / 30
-
     tenure_total = round(df_desligados["tenure_meses"].mean(), 1)
     tenure_vol = round(df_desligados.loc[df_desligados["motivo_voluntario"], "tenure_meses"].mean(), 1)
     tenure_invol = round(df_desligados.loc[~df_desligados["motivo_voluntario"], "tenure_meses"].mean(), 1)
     tenure_ativos = round(df.loc[df["ativo"], "tempo_casa"].mean(), 1)
 
-    colA, colB, colC, colD = st.columns(4)
-    colA.metric("⏱️ Tenure Total", f"{tenure_total}m")
-    colB.metric("🤝 Voluntário", f"{tenure_vol}m")
-    colC.metric("🏢 Involuntário", f"{tenure_invol}m")
-    colD.metric("👥 Ativos", f"{tenure_ativos}m")
+    colA, colB, colC, colD, colE, colF, colG = st.columns(7)
+    colA.metric("👥 Ativos Médios", media_ativos)
+    colB.metric("📉 Desligamentos Médios", media_deslig)
+    colC.metric("📊 Turnover Médio Total (%)", turnover_total_medio)
+    colD.metric("🤝 Voluntário (%)", turnover_vol_medio)
+    colE.metric("📋 Involuntário (%)", turnover_invol_medio)
+    colF.metric("⏱️ Tenure Voluntário (m)", tenure_vol)
+    colG.metric("🏢 Tenure Involuntário (m)", tenure_invol)
+
+    st.divider()
+
+    # --- gráfico 1: evolução do turnover total
+    fig_turn_total = go.Figure()
+    fig_turn_total.add_trace(go.Scatter(
+        x=turnover_df["Mês"], y=turnover_df["Turnover Total (%)"],
+        mode="lines+markers", name="Total", line=dict(color="#00FFFF", width=3)
+    ))
+    fig_turn_total.add_trace(go.Scatter(
+        x=turnover_df["Mês"], y=turnover_df["Turnover Voluntário (%)"],
+        mode="lines+markers", name="Voluntário", line=dict(color="#FFD700", dash="dash")
+    ))
+    fig_turn_total.add_trace(go.Scatter(
+        x=turnover_df["Mês"], y=turnover_df["Turnover Involuntário (%)"],
+        mode="lines+markers", name="Involuntário", line=dict(color="#FF4500", dash="dot")
+    ))
+    fig_turn_total.update_layout(
+        template="plotly_dark",
+        title="📆 Evolução Mensal do Turnover (%)",
+        xaxis_title="Mês",
+        yaxis_title="Turnover (%)",
+        hovermode="x unified"
+    )
+    st.plotly_chart(fig_turn_total, use_container_width=True)
+
+    # --- gráfico 2: headcount vs desligados
+    fig_hc = go.Figure()
+    fig_hc.add_trace(go.Bar(
+        x=turnover_df["Mês"], y=turnover_df["Ativos"], name="Ativos",
+        marker_color="rgba(0,255,204,0.4)"
+    ))
+    fig_hc.add_trace(go.Bar(
+        x=turnover_df["Mês"], y=turnover_df["Desligados"], name="Desligados",
+        marker_color="rgba(255,80,80,0.7)"
+    ))
+    fig_hc.update_layout(
+        barmode="overlay",
+        template="plotly_dark",
+        title="📊 Ativos x Desligados por Mês",
+        xaxis_title="Mês",
+        yaxis_title="Quantidade de Colaboradores",
+        hovermode="x unified"
+    )
+    st.plotly_chart(fig_hc, use_container_width=True)
+
+    # --- gráfico 3: tenure médio por tipo de desligamento
+    tenure_data = pd.DataFrame({
+        "Tipo": ["Voluntário", "Involuntário"],
+        "Tenure Médio (m)": [tenure_vol, tenure_invol]
+    })
+    fig_tenure = px.bar(
+        tenure_data, x="Tipo", y="Tenure Médio (m)",
+        color="Tipo", color_discrete_sequence=["#FFD700", "#FF4500"]
+    )
+    fig_tenure.update_layout(
+        template="plotly_dark",
+        title="⏳ Tempo Médio de Permanência até o Desligamento",
+        yaxis_title="Meses"
+    )
+    st.plotly_chart(fig_tenure, use_container_width=True)
 
 # =========================
 # 3️⃣ RISCO (TRI)
