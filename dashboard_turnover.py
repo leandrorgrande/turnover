@@ -488,142 +488,147 @@ def view_headcount(dfv):
 # TURNOVER
 # =========================================================
 def view_turnover(dfv):
-    st.subheader("🔄 Turnover — Evolução e Indicadores")
+    st.subheader("🔄 Turnover — Evolução, Indicadores e Tenure")
 
-    adm_c, desl_c, mot_c = col_like(dfv, "data de admissão"), col_like(dfv, "data de desligamento"), col_like(dfv, "motivo de desligamento")
+    adm_c = col_like(dfv, "data de admissão")
+    desl_c = col_like(dfv, "data de desligamento")
+    mot_c = col_like(dfv, "motivo de desligamento")
+
     if not (adm_c and desl_c):
         st.warning("⚠️ Faltam colunas de admissão/desligamento para esta seção.")
         return
 
-    # =====================================================
+    # ============================================================
     # 🔹 Caso tenha competência aplicada
-    # =====================================================
-    if "ativo" in dfv.columns and "desligado_no_mes" in dfv.columns and (
-        dfv["ativo"].any() or dfv["desligado_no_mes"].any()
-    ):
+    # ============================================================
+    if "ativo" in dfv.columns and "desligado_no_mes" in dfv.columns:
         ativos_mes = dfv[dfv["ativo"] == True]
         deslig_mes = dfv[dfv["desligado_no_mes"] == True]
 
         a, d = len(ativos_mes), len(deslig_mes)
-        if a == 0:
-            st.warning("Sem colaboradores ativos no período selecionado.")
-            return
-
         dv = deslig_mes[mot_c].astype(str).str.contains("Pedido", case=False, na=False).sum() if mot_c else 0
         di = d - dv
 
-        turnover_total = round((d/a)*100, 1)
-        turnover_vol = round((dv/a)*100, 1)
-        turnover_inv = round((di/a)*100, 1)
+        turnover_total = round((d / a) * 100, 1) if a > 0 else 0
+        turnover_vol = round((dv / a) * 100, 1) if a > 0 else 0
+        turnover_inv = round((di / a) * 100, 1) if a > 0 else 0
 
+        st.markdown("### 📅 Indicadores do Período Selecionado")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Ativos", a)
         c2.metric("Desligados", d)
         c3.metric("Turnover (%)", turnover_total)
         c4.metric("Vol / Inv (%)", f"{turnover_vol} / {turnover_inv}")
 
-        st.markdown("### 📊 Distribuição dos Desligamentos no Período")
+    # ============================================================
+    # 🔸 Construção do histórico completo
+    # ============================================================
+    dft = dfv.copy()
+    dft[adm_c] = pd.to_datetime(dft[adm_c], errors="coerce")
+    dft[desl_c] = pd.to_datetime(dft[desl_c], errors="coerce")
+    dmin = dft[adm_c].min()
+    dmax = dft[desl_c].max() if dft[desl_c].notna().any() else datetime.now()
+    meses = pd.date_range(dmin, dmax, freq="MS")
 
-        # Gráfico de barras — Voluntário vs Involuntário
-        df_pie = pd.DataFrame({
-            "Tipo": ["Voluntário", "Involuntário"],
-            "Quantidade": [dv, di]
+    rows = []
+    for mes in meses:
+        ativos_mes = dft[(dft[adm_c] <= mes) & ((dft[desl_c].isna()) | (dft[desl_c] > mes))]
+        deslig_mes = dft[(dft[desl_c].notna()) & (dft[desl_c].dt.to_period("M") == mes.to_period("M"))]
+        a, d = len(ativos_mes), len(deslig_mes)
+        dv = deslig_mes[mot_c].astype(str).str.contains("Pedido", case=False, na=False).sum() if mot_c else 0
+        di = d - dv
+        rows.append({
+            "Mês": mes.strftime("%Y-%m"),
+            "Ativos": a,
+            "Desligados": d,
+            "Voluntários": dv,
+            "Involuntários": di,
+            "Turnover Total (%)": (d/a)*100 if a>0 else 0,
+            "Turnover Voluntário (%)": (dv/a)*100 if a>0 else 0,
+            "Turnover Involuntário (%)": (di/a)*100 if a>0 else 0
         })
-        fig_bar = px.bar(
-            df_pie, x="Tipo", y="Quantidade",
-            color="Tipo", text="Quantidade",
-            color_discrete_map={"Voluntário": "#FFD700", "Involuntário": "#FF6347"},
-            title="Distribuição dos Desligamentos"
-        )
-        fig_bar.update_traces(textposition="outside")
-        fig_bar.update_layout(template="plotly_dark", showlegend=False)
-        st.plotly_chart(fig_bar, use_container_width=True)
+    turn = pd.DataFrame(rows)
 
-        # Gráfico de pizza — proporção
-        fig_pie = px.pie(
-            df_pie, values="Quantidade", names="Tipo",
-            title="Proporção de Desligamentos",
-            color="Tipo", color_discrete_map={"Voluntário": "#FFD700", "Involuntário": "#FF6347"}
-        )
-        fig_pie.update_layout(template="plotly_dark")
-        st.plotly_chart(fig_pie, use_container_width=True)
+    if turn.empty:
+        st.warning("Sem dados suficientes para gerar histórico.")
+        return
 
-        # Lista detalhada dos desligamentos
-        st.markdown("### 📅 Detalhamento dos Desligamentos")
-        cols_show = [c for c in ["nome", "departamento", "cargo", mot_c, desl_c] if c in dfv.columns]
-        st.dataframe(deslig_mes[cols_show].sort_values(desl_c, ascending=False), use_container_width=True)
+    # ============================================================
+    # 🔹 KPIs Médios (histórico)
+    # ============================================================
+    st.markdown("### 📊 Indicadores Históricos (Média Geral)")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Ativos Médios", int(turn["Ativos"].mean()))
+    c2.metric("Desligamentos Médios", int(turn["Desligados"].mean()))
+    c3.metric("Turnover Médio (%)", round(turn["Turnover Total (%)"].mean(), 1))
+    c4.metric(
+        "Vol / Inv (%)",
+        f"{round(turn['Turnover Voluntário (%)'].mean(), 1)} / {round(turn['Turnover Involuntário (%)'].mean(), 1)}"
+    )
 
-    # =====================================================
-    # 🔸 Caso sem competência — mostra evolução histórica
-    # =====================================================
-    else:
-        dft = dfv.copy()
-        dft[adm_c] = pd.to_datetime(dft[adm_c], errors="coerce")
-        dft[desl_c] = pd.to_datetime(dft[desl_c], errors="coerce")
-        dmin = dft[adm_c].min()
-        dmax = dft[desl_c].max() if dft[desl_c].notna().any() else datetime.now()
-        meses = pd.date_range(dmin, dmax, freq="MS")
+    st.divider()
 
-        rows = []
-        for mes in meses:
-            ativos_mes = dft[(dft[adm_c] <= mes) & ((dft[desl_c].isna()) | (dft[desl_c] > mes))]
-            deslig_mes = dft[(dft[desl_c].notna()) & (dft[desl_c].dt.to_period("M") == mes.to_period("M"))]
-            a, d = len(ativos_mes), len(deslig_mes)
-            dv = deslig_mes[mot_c].astype(str).str.contains("Pedido", case=False, na=False).sum() if mot_c else 0
-            di = d - dv
-            rows.append({
-                "Mês": mes.strftime("%Y-%m"),
-                "Ativos": a,
-                "Desligados": d,
-                "Voluntários": dv,
-                "Involuntários": di,
-                "Turnover Total (%)": (d/a)*100 if a>0 else 0,
-                "Turnover Voluntário (%)": (dv/a)*100 if a>0 else 0,
-                "Turnover Involuntário (%)": (di/a)*100 if a>0 else 0
-            })
-        turn = pd.DataFrame(rows)
+    # ============================================================
+    # 📈 Gráfico 1: Evolução do Turnover
+    # ============================================================
+    fig1 = go.Figure()
+    fig1.add_trace(go.Scatter(
+        x=turn["Mês"], y=turn["Turnover Total (%)"],
+        mode="lines+markers", name="Total",
+        line=dict(color="#00FFFF", width=3)
+    ))
+    fig1.add_trace(go.Scatter(
+        x=turn["Mês"], y=turn["Turnover Voluntário (%)"],
+        mode="lines+markers", name="Voluntário",
+        line=dict(color="#FFD700", dash="dash")
+    ))
+    fig1.add_trace(go.Scatter(
+        x=turn["Mês"], y=turn["Turnover Involuntário (%)"],
+        mode="lines+markers", name="Involuntário",
+        line=dict(color="#FF4500", dash="dot")
+    ))
+    fig1.update_layout(
+        template="plotly_dark",
+        title="📆 Evolução Mensal do Turnover (%)",
+        xaxis_title="Mês",
+        yaxis_title="Turnover (%)",
+        hovermode="x unified"
+    )
+    st.plotly_chart(fig1, use_container_width=True)
 
-        if turn.empty:
-            st.warning("Sem dados históricos suficientes para cálculo de turnover.")
-            return
+    # ============================================================
+    # 📊 Gráfico 2: Ativos x Desligados
+    # ============================================================
+    fig2 = go.Figure()
+    fig2.add_trace(go.Bar(x=turn["Mês"], y=turn["Ativos"], name="Ativos", marker_color="rgba(0,255,204,0.4)"))
+    fig2.add_trace(go.Bar(x=turn["Mês"], y=turn["Desligados"], name="Desligados", marker_color="rgba(255,80,80,0.7)"))
+    fig2.update_layout(
+        barmode="overlay",
+        template="plotly_dark",
+        title="📊 Ativos x Desligados por Mês",
+        xaxis_title="Mês",
+        yaxis_title="Quantidade"
+    )
+    st.plotly_chart(fig2, use_container_width=True)
 
-        # KPIs
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Ativos Médios", int(turn["Ativos"].mean()))
-        c2.metric("Desligamentos Médios", int(turn["Desligados"].mean()))
-        c3.metric("Turnover Médio (%)", round(turn["Turnover Total (%)"].mean(), 1))
-        c4.metric("Vol/Inv (%)",
-                  f"{round(turn['Turnover Voluntário (%)'].mean(), 1)} / {round(turn['Turnover Involuntário (%)'].mean(), 1)}")
+    # ============================================================
+    # ⏳ Gráfico 3: Tenure até o desligamento
+    # ============================================================
+    dfd = dft[dft["ativo"] == False].copy()
+    dfd["tenure_meses"] = (dfd[desl_c] - dfd[adm_c]).dt.days / 30
+    tenure_total = safe_mean(dfd["tenure_meses"])
+    tenure_vol = safe_mean(
+        dfd.loc[dfd[mot_c].astype(str).str.contains("Pedido", case=False, na=False), "tenure_meses"]
+    ) if mot_c else 0
+    tenure_inv = safe_mean(
+        dfd.loc[~dfd[mot_c].astype(str).str.contains("Pedido", case=False, na=False), "tenure_meses"]
+    ) if mot_c else 0
 
-        st.divider()
-
-        # 📈 Gráfico 1: Evolução Turnover
-        fig1 = go.Figure()
-        fig1.add_trace(go.Scatter(x=turn["Mês"], y=turn["Turnover Total (%)"], mode="lines+markers", name="Total", line=dict(color="#00FFFF", width=3)))
-        fig1.add_trace(go.Scatter(x=turn["Mês"], y=turn["Turnover Voluntário (%)"], mode="lines+markers", name="Voluntário", line=dict(color="#FFD700", dash="dash")))
-        fig1.add_trace(go.Scatter(x=turn["Mês"], y=turn["Turnover Involuntário (%)"], mode="lines+markers", name="Involuntário", line=dict(color="#FF4500", dash="dot")))
-        fig1.update_layout(template="plotly_dark", title="📆 Evolução Mensal do Turnover (%)", xaxis_title="Mês", yaxis_title="Turnover (%)", hovermode="x unified")
-        st.plotly_chart(fig1, use_container_width=True)
-
-        # 📊 Gráfico 2: Ativos x Desligados
-        fig2 = go.Figure()
-        fig2.add_trace(go.Bar(x=turn["Mês"], y=turn["Ativos"], name="Ativos", marker_color="rgba(0,255,204,0.4)"))
-        fig2.add_trace(go.Bar(x=turn["Mês"], y=turn["Desligados"], name="Desligados", marker_color="rgba(255,80,80,0.7)"))
-        fig2.update_layout(barmode="overlay", template="plotly_dark", title="📊 Ativos x Desligados por Mês", xaxis_title="Mês", yaxis_title="Quantidade")
-        st.plotly_chart(fig2, use_container_width=True)
-
-        # Tenure médio até desligamento
-        dfd = dft[dft["ativo"] == False].copy()
-        dfd["tenure_meses"] = (dfd[desl_c] - dfd[adm_c]).dt.days / 30
-        tenure_total = safe_mean(dfd["tenure_meses"])
-        tenure_vol = safe_mean(dfd.loc[dfd[mot_c].astype(str).str.contains("Pedido", case=False, na=False), "tenure_meses"]) if mot_c else 0
-        tenure_inv = safe_mean(dfd.loc[~dfd[mot_c].astype(str).str.contains("Pedido", case=False, na=False), "tenure_meses"]) if mot_c else 0
-
-        st.markdown("### ⏳ Tenure até o desligamento (média em meses)")
-        c5, c6, c7 = st.columns(3)
-        c5.metric("Total", f"{tenure_total}")
-        c6.metric("Voluntário", f"{tenure_vol}")
-        c7.metric("Involuntário", f"{tenure_inv}")
+    st.markdown("### ⏳ Tempo Médio até o Desligamento (Tenure)")
+    c5, c6, c7 = st.columns(3)
+    c5.metric("Total (m)", f"{tenure_total}")
+    c6.metric("Voluntário (m)", f"{tenure_vol}")
+    c7.metric("Involuntário (m)", f"{tenure_inv}")
 
 
 # =========================================================
