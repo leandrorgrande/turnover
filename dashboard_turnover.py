@@ -2,9 +2,11 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import os
+from pathlib import Path
 
 # =========================================================
-# CONFIGURAÇÃO GERAL E ESTILO
+# CONFIG GERAL + ESTILO
 # =========================================================
 st.set_page_config(page_title="Dashboard de Turnover • Main", layout="wide")
 
@@ -28,6 +30,8 @@ div[data-testid="stMetric"] {
 st.title("🚀 Dashboard de People Analytics — Hub Principal")
 st.caption("Carrega, valida e disponibiliza os dados-base para as páginas do dashboard.")
 
+APP_ROOT = Path(__file__).parent
+
 # =========================================================
 # HELPERS
 # =========================================================
@@ -46,13 +50,12 @@ def ensure_core_fields(colab: pd.DataFrame) -> pd.DataFrame:
     else:
         colab["ativo"] = True
 
-    # Tempo de casa
+    # Tempo de casa (meses)
     now = pd.Timestamp.now()
     if "data de admissão" in colab.columns:
         colab["tempo_casa"] = (now - colab["data de admissão"]).dt.days / 30
     else:
         colab["tempo_casa"] = np.nan
-
     return colab
 
 def merge_last_performance(colab: pd.DataFrame, perf: pd.DataFrame) -> pd.DataFrame:
@@ -80,21 +83,33 @@ def show_sheet_preview(name: str, df: pd.DataFrame, expected_cols: list[str] | N
             st.warning(f"⚠️ Colunas esperadas ausentes: {', '.join(missing)}")
     st.dataframe(df.head(5), use_container_width=True)
 
+def page_exists(rel_path: str) -> bool:
+    return (APP_ROOT / rel_path).exists()
+
 def nav_links():
     st.markdown("### 🧭 Acessar páginas de análise")
-    cols = st.columns(3)
 
-    if hasattr(st, "page_link"):
-        with cols[0]:
-            st.page_link("pages/1_Visao_Geral.py", label="📍 Visão Geral")
-            st.page_link("pages/2_Headcount.py", label="👥 Headcount")
-        with cols[1]:
-            st.page_link("pages/3_Turnover.py", label="🔄 Turnover")
-            st.page_link("pages/4_Risco_TRI.py", label="🔮 Risco (TRI)")
-        with cols[2]:
-            st.info("💡 As análises com IA estarão dentro das páginas.")
-    else:
-        st.write("⚠️ Sua versão do Streamlit é antiga — use o menu lateral para navegar entre as páginas.")
+    def go(path):
+        if not page_exists(path):
+            st.error(f"Página não encontrada no repositório: `{path}`. Verifique o nome e a pasta `/pages`.")
+            return
+        try:
+            st.switch_page(path)
+        except Exception:
+            # Fallback elegante caso a função não esteja disponível na sua versão
+            st.info(f"Abra pelo menu lateral: **{path}**")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.button("📍 Visão Geral", on_click=lambda: go("pages/1_Visao_Geral.py"),
+                  disabled=not page_exists("pages/1_Visao_Geral.py"))
+        st.button("👥 Headcount", on_click=lambda: go("pages/2_Headcount.py"),
+                  disabled=not page_exists("pages/2_Headcount.py"))
+    with c2:
+        st.button("🔄 Turnover", on_click=lambda: go("pages/3_Turnover.py"),
+                  disabled=not page_exists("pages/3_Turnover.py"))
+        st.button("🔮 Risco (TRI)", on_click=lambda: go("pages/4_Risco_TRI.py"),
+                  disabled=not page_exists("pages/4_Risco_TRI.py"))
 
 # =========================================================
 # UPLOAD & LEITURA
@@ -131,7 +146,7 @@ colab = safe_read("colaboradores")
 perf = safe_read("performance")
 
 # =========================================================
-# VALIDAÇÃO E LIMPEZA DE CAMPOS
+# VALIDAÇÃO E LIMPEZA (ignora extras e avisa faltantes)
 # =========================================================
 expected_cols = {
     "empresa": ["nome empresa", "cnpj", "unidade", "cidade", "uf"],
