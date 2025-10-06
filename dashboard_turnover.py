@@ -89,27 +89,33 @@ def page_exists(rel_path: str) -> bool:
 def nav_links():
     st.markdown("### 🧭 Acessar páginas de análise")
 
-    def go(path):
-        if not page_exists(path):
-            st.error(f"Página não encontrada no repositório: `{path}`. Verifique o nome e a pasta `/pages`.")
-            return
-        try:
-            st.switch_page(path)
-        except Exception:
-            # Fallback elegante caso a função não esteja disponível na sua versão
-            st.info(f"Abra pelo menu lateral: **{path}**")
+    st.markdown("""
+    <style>
+    .nav-btn {
+        display: inline-block;
+        margin: 8px 12px;
+        padding: 10px 18px;
+        border-radius: 10px;
+        text-decoration: none;
+        background: linear-gradient(135deg, #00c9a7, #007cf0);
+        color: white !important;
+        font-weight: 600;
+        box-shadow: 0 0 12px rgba(0, 255, 204, 0.2);
+        transition: all 0.2s ease-in-out;
+    }
+    .nav-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 0 18px rgba(0, 255, 204, 0.4);
+    }
+    </style>
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.button("📍 Visão Geral", on_click=lambda: go("pages/1_Visao_Geral.py"),
-                  disabled=not page_exists("pages/1_Visao_Geral.py"))
-        st.button("👥 Headcount", on_click=lambda: go("pages/2_Headcount.py"),
-                  disabled=not page_exists("pages/2_Headcount.py"))
-    with c2:
-        st.button("🔄 Turnover", on_click=lambda: go("pages/3_Turnover.py"),
-                  disabled=not page_exists("pages/3_Turnover.py"))
-        st.button("🔮 Risco (TRI)", on_click=lambda: go("pages/4_Risco_TRI.py"),
-                  disabled=not page_exists("pages/4_Risco_TRI.py"))
+    <div style="margin-top: 10px;">
+        <a class="nav-btn" href="/1_Visao_Geral" target="_self">📍 Visão Geral</a>
+        <a class="nav-btn" href="/2_Headcount" target="_self">👥 Headcount</a>
+        <a class="nav-btn" href="/3_Turnover" target="_self">🔄 Turnover</a>
+        <a class="nav-btn" href="/4_Risco_TRI" target="_self">🔮 Risco (TRI)</a>
+    </div>
+    """, unsafe_allow_html=True)
 
 # =========================================================
 # UPLOAD & LEITURA
