@@ -151,7 +151,7 @@ colab = merge_last_performance(colab, perf)
 df = colab.copy()
 
 # =========================================================
-# FILTROS LATERAIS
+# FILTROS LATERAIS (corrigido)
 # =========================================================
 with st.sidebar:
     st.header("🔎 Filtros Globais")
@@ -163,10 +163,7 @@ with st.sidebar:
     desl_col = col_like(df, "data de desligamento")
 
     data_min = pd.to_datetime(df[adm_col], errors="coerce").min() if adm_col else None
-    if desl_col and df[desl_col].notna().any():
-        data_max = pd.to_datetime(df[desl_col], errors="coerce").max()
-    else:
-        data_max = datetime.now()
+    data_max = pd.to_datetime(df[desl_col], errors="coerce").max() if desl_col and df[desl_col].notna().any() else datetime.now()
 
     periodo = st.date_input(
         "Período de Análise",
@@ -184,14 +181,24 @@ with st.sidebar:
     tipos = sorted(df[tipo_col].dropna().unique().tolist()) if tipo_col else []
     tipo_sel = st.multiselect("Tipo de Contrato", tipos, default=tipos)
 
-# aplica filtros
+# Aplicação dos filtros
 df_filt = df.copy()
-if empresa_sel and "nome empresa" in empresa.columns:
-    df_filt = df_filt.merge(empresa[empresa["nome empresa"] == empresa_sel], how="inner")
+
+# 1️⃣ filtro de empresa
+if empresa_sel:
+    empresa_col = col_like(df_filt, "empresa") or col_like(df_filt, "nome empresa")
+    if empresa_col:
+        df_filt = df_filt[df_filt[empresa_col] == empresa_sel]
+
+# 2️⃣ filtro de departamento
 if dept_col and dept_sel:
     df_filt = df_filt[df_filt[dept_col].isin(dept_sel)]
+
+# 3️⃣ filtro de tipo de contrato
 if tipo_col and tipo_sel:
     df_filt = df_filt[df_filt[tipo_col].isin(tipo_sel)]
+
+# 4️⃣ filtro de período
 if adm_col:
     dt_ini = pd.to_datetime(periodo[0])
     dt_fim = pd.to_datetime(periodo[1])
