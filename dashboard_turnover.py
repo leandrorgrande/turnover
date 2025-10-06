@@ -218,6 +218,57 @@ with c4:
 st.markdown("---")
 
 # =========================================================
+# 🔧 FILTROS LATERAIS (SIDEBAR)
+# =========================================================
+with st.sidebar:
+    st.header("🔎 Filtros Globais")
+
+    # Filtro: Empresa
+    empresas_disp = empresa["nome empresa"].dropna().unique().tolist() if not empresa.empty else []
+    empresa_sel = st.selectbox("Empresa", empresas_disp, index=0 if empresas_disp else None)
+
+    # Filtro: Período
+    data_min = pd.to_datetime(df["data de admissão"], errors="coerce").min()
+    data_max = pd.to_datetime(df["data de desligamento"], errors="coerce").max() if df["data de desligamento"].notna().any() else datetime.now()
+    periodo = st.date_input(
+        "Período de Análise",
+        value=(data_min.date() if not pd.isna(data_min) else datetime(2023,1,1).date(),
+               data_max.date() if not pd.isna(data_max) else datetime.now().date())
+    )
+
+    # Filtro: Departamento
+    dept_col = col_like(df, "departamento")
+    deptos = sorted(df[dept_col].dropna().unique().tolist()) if dept_col else []
+    dept_sel = st.multiselect("Departamentos", deptos, default=deptos)
+
+    # Filtro: Tipo de Contrato
+    tipo_col = col_like(df, "tipo_contrato")
+    tipos = sorted(df[tipo_col].dropna().unique().tolist()) if tipo_col else []
+    tipo_sel = st.multiselect("Tipo de Contrato", tipos, default=tipos)
+
+# Aplicação dos filtros ao dataframe
+df_filt = df.copy()
+if empresa_sel and "nome empresa" in empresa.columns:
+    df_filt = df_filt.merge(empresa[empresa["nome empresa"] == empresa_sel], how="inner")
+if dept_col and dept_sel:
+    df_filt = df_filt[df_filt[dept_col].isin(dept_sel)]
+if tipo_col and tipo_sel:
+    df_filt = df_filt[df_filt[tipo_col].isin(tipo_sel)]
+if "data de admissão" in df_filt.columns:
+    df_filt = df_filt[df_filt["data de admissão"].between(pd.to_datetime(periodo[0]), pd.to_datetime(periodo[1]), inclusive="both")]
+
+# =========================================================
+# 📊 PAINEL DE QUALIDADE DE DADOS (RECOLHÍVEL)
+# =========================================================
+with st.expander("🧩 Análise de Qualidade e Estrutura dos Dados", expanded=False):
+    st.markdown("Use esta seção apenas para verificar se os dados foram carregados corretamente e se as colunas estão padronizadas.")
+    c1, c2, c3 = st.columns(3)
+    with c1: show_sheet_preview("empresa", empresa, expected_cols["empresa"])
+    with c2: show_sheet_preview("colaboradores", colab, expected_cols["colaboradores"])
+    with c3: show_sheet_preview("performance", perf, expected_cols["performance"])
+    st.caption("⚙️ Feche esta seção para focar apenas nos KPIs e análises.")
+  
+# =========================================================
 # VIEWS (renderizadas abaixo conforme seleção)
 # =========================================================
 def view_overview(df):
