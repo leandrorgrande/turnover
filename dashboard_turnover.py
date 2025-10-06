@@ -119,18 +119,69 @@ def clean_and_warn(df, expected, name):
     return df
 
 # =========================================================
-# UPLOAD & LEITURA
+# 🧩 UPLOAD, LEITURA E ANÁLISE DE QUALIDADE DOS DADOS
 # =========================================================
-uploaded = st.file_uploader("📂 Carregue o Excel (.xlsx) com abas 'empresa', 'colaboradores' e 'performance'", type=["xlsx"])
+uploaded = st.file_uploader(
+    "📂 Carregue o Excel (.xlsx) com abas 'empresa', 'colaboradores' e 'performance'",
+    type=["xlsx"]
+)
 if not uploaded:
-    st.info("⬆️ Envie o arquivo para começar.")
+    st.info("⬆️ Envie o arquivo para começar a análise.")
     st.stop()
 
-sheets = load_excel(uploaded)
-empresa = sheets.get("empresa", pd.DataFrame())
-colab = sheets.get("colaboradores", pd.DataFrame())
-perf = sheets.get("performance", pd.DataFrame())
+with st.expander("🧩 Análise de Qualidade e Estrutura dos Dados", expanded=False):
 
+    st.markdown(
+        "Visualize aqui como o arquivo foi carregado e validado. "
+        "Essa etapa ocorre automaticamente antes de calcular os indicadores."
+    )
+
+    @st.cache_data(show_spinner=True)
+    def load_and_prepare(file):
+        """Carrega e trata os dados de forma cacheada e segura."""
+        sheets = load_excel(file)
+
+        empresa = sheets.get("empresa", pd.DataFrame())
+        colab = sheets.get("colaboradores", pd.DataFrame())
+        perf = sheets.get("performance", pd.DataFrame())
+
+        expected_cols = {
+            "empresa": ["nome empresa", "cnpj", "unidade", "cidade", "uf"],
+            "colaboradores": [
+                "matricula", "nome", "departamento", "cargo", "matricula do gestor",
+                "tipo_contrato", "genero", "data de admissão", "data de desligamento",
+                "motivo de desligamento", "ultima promoção", "ultimo mérito"
+            ],
+            "performance": ["matricula", "avaliação", "data de encerramento do ciclo"]
+        }
+
+        # Limpeza e alertas
+        empresa = clean_and_warn(empresa, expected_cols["empresa"], "empresa")
+        colab = clean_and_warn(colab, expected_cols["colaboradores"], "colaboradores")
+        perf = clean_and_warn(perf, expected_cols["performance"], "performance")
+
+        # Conversão e merges
+        colab = to_datetime_safe(colab, DATE_COLS)
+        colab = ensure_core_fields(colab)
+        colab = merge_last_performance(colab, perf)
+
+        return empresa, colab, perf, expected_cols
+
+    # --- Executa a carga real ---
+    empresa, colab, perf, expected_cols = load_and_prepare(uploaded)
+    df = colab.copy()
+
+    # --- Exibe resultados e estrutura ---
+    st.markdown("### Estrutura das Abas")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        show_sheet_preview("empresa", empresa, expected_cols["empresa"])
+    with c2:
+        show_sheet_preview("colaboradores", colab, expected_cols["colaboradores"])
+    with c3:
+        show_sheet_preview("performance", perf, expected_cols["performance"])
+
+    st.caption("✅ Dados processados com sucesso. Feche esta seção para visualizar os indicadores abaixo.")
 
 
 # =========================================================
