@@ -437,22 +437,13 @@ def view_overview(dfv):
 
     st.markdown("### ⏳ Tenure (Tempo Médio)")
     st.metric("Tenure Médio (m)", tenure_total)
-  
+
+
+
 
 # =========================================================
-# RENDER DA VIEW SELECIONADA (usa df_filt)
+# Headcount
 # =========================================================
-view = st.session_state["view"]
-if view == "overview":
-    view_overview(df_final.copy())
-elif view == "headcount":
-    view_headcount(df_final.copy())
-elif view == "turnover":
-    view_turnover(df_final.copy())
-elif view == "risk":
-    view_risk(df_final.copy())
-else:
-    view_overview(df_final.copy())
 
 def view_headcount(dfv):
     st.subheader("👥 Headcount — Estrutura e Evolução")
@@ -491,3 +482,179 @@ def view_headcount(dfv):
     # Adicional: % por departamento
     dist["%"] = (dist["Headcount"] / dist["Headcount"].sum()) * 100
     st.dataframe(dist.sort_values("Headcount", ascending=False).reset_index(drop=True), use_container_width=True)
+
+
+# =========================================================
+# TURNOVER
+# =========================================================
+
+
+def view_turnover(dfv):
+    st.subheader("🔄 Turnover — Evolução e Indicadores")
+
+    adm_c, desl_c, mot_c = col_like(dfv, "data de admissão"), col_like(dfv, "data de desligamento"), col_like(dfv, "motivo de desligamento")
+    if not (adm_c and desl_c):
+        st.warning("⚠️ Faltam colunas de admissão/desligamento para esta seção.")
+        return
+
+    # Se há competência aplicada
+    if "ativo" in dfv.columns and "desligado_no_mes" in dfv.columns and dfv["desligado_no_mes"].any():
+        ativos_mes = dfv[dfv["ativo"] == True]
+        deslig_mes = dfv[dfv["desligado_no_mes"] == True]
+
+        a, d = len(ativos_mes), len(deslig_mes)
+        if a == 0:
+            st.warning("Sem colaboradores ativos no período selecionado.")
+            return
+
+        dv = deslig_mes[mot_c].astype(str).str.contains("Pedido", case=False, na=False).sum() if mot_c else 0
+        di = d - dv
+
+        turnover_total = round((d/a)*100, 1)
+        turnover_vol = round((dv/a)*100, 1)
+        turnover_inv = round((di/a)*100, 1)
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Ativos", a)
+        c2.metric("Desligados", d)
+        c3.metric("Turnover (%)", turnover_total)
+        c4.metric("Vol / Inv (%)", f"{turnover_vol} / {turnover_inv}")
+
+        st.markdown("### 📅 Desligamentos Detalhados")
+        st.dataframe(
+            deslig_mes[[c for c in [adm_c, desl_c, mot_c, "nome", "departamento", "cargo"] if c in dfv.columns]],
+            use_container_width=True
+        )
+
+    else:
+        # Caso sem competência, faz série histórica
+        dft = dfv.copy()
+        dft[adm_c] = pd.to_datetime(dft[adm_c], errors="coerce")
+        dft[desl_c] = pd.to_datetime(dft[desl_c], errors="coerce")
+        dmin = dft[adm_c].min()
+        dmax = dft[desl_c].max() if dft[desl_c].notna().any() else datetime.now()
+        meses = pd.date_range(dmin, dmax, freq="MS")
+
+        rows = []
+        for mes in meses:
+            ativos_mes = dft[(dft[adm_c] <= mes) & ((dft[desl_c].isna()) | (dft[desl_c] > mes))]
+            deslig_mes = dft[(dft[desl_c].notna()) & (dft[desl_c].dt.to_period("M") == mes.to_period("M"))]
+            a, d = len(ativos_mes), len(deslig_mes)
+            dv = deslig_mes[mot_c].astype(str).str.contains("Pedido", case=False, na=False).sum() if mot_c else 0
+            di = d - dv
+            rows.append({
+                "Mês": mes.strftime("%Y-%m"),
+                "Ativos": a,
+                "Desligados": d,
+                "Voluntários": dv,
+                "Involuntários": di,
+                "Turnover Total (%)": (d/a)*100 if a>0 else 0,
+                "Turnover Voluntário (%)": (dv/a)*100 if a>0 else 0,
+                "Turnover Involuntário (%)": (di/a)*100 if a>0 else 0
+            })
+        turn = pd.DataFrame(rows)
+
+        # KPIs
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Ativos Médios", int(turn["Ativos"].mean()) if not turn.empty else 0)
+        c2.metric("Desligamentos Médios", int(turn["Desligados"].mean()) if not turn.empty else 0)
+        c3.metric("Turnover Médio (%)", round(turn["Turnover Total (%)"].mean(), 1) if not turn.empty else 0)
+        c4.metric("Vol/Inv (%)",
+                  f"{round(turn['Turnover Voluntário (%)'].mean(), 1)} / {round(turn['Turnover Involuntário (%)'].mean(), 1)}")
+
+        st.divider()
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=turn["Mês"], y=turn["Turnover Total (%)"], name="Total", mode="lines+markers"))
+        fig.add_trace(go.Scatter(x=turn["Mês"], y=turn["Turnover Voluntário (%)"], name="Voluntário", mode="lines+markers"))
+        fig.add_trace(go.Scatter(x=turn["Mês"], y=turn["Turnover Involuntário (%)"], name="Involuntário", mode="lines+markers"))
+        fig.update_layout(template="plotly_dark", title="📈 Evolução Mensal do Turnover", hovermode="x unified")
+        st.plotly_chart(fig, use_container_width=True)
+
+
+
+# =========================================================
+# RISK
+# =========================================================
+
+def view_risk(dfv):
+    st.subheader("🔮 Risco de Turnover (TRI) — Índice Composto")
+
+    now = pd.Timestamp.now()
+
+    # Considera apenas ativos (atuais ou na competência)
+    if "ativo" in dfv.columns:
+        base = dfv[dfv["ativo"] == True].copy()
+    else:
+        base = dfv[dfv["data de desligamento"].isna()].copy()
+
+    if base.empty:
+        st.warning("Nenhum colaborador ativo encontrado para calcular risco.")
+        return
+
+    base["meses_desde_promocao"] = (now - pd.to_datetime(base.get("ultima promoção"), errors="coerce")).dt.days / 30
+    base["meses_desde_merito"]  = (now - pd.to_datetime(base.get("ultimo mérito"), errors="coerce")).dt.days / 30
+
+    # Tamanho da equipe (por gestor)
+    if "matricula do gestor" in base.columns:
+        gsize = base.groupby("matricula do gestor")["matricula"].count().rename("tam_eq")
+        base = base.merge(gsize, left_on="matricula do gestor", right_index=True, how="left")
+    else:
+        base["tam_eq"] = 0
+
+    # Performance
+    perf_map = {"excepcional":10, "acima do esperado":7, "dentro do esperado":4, "abaixo do esperado":1}
+    base["score_perf_raw"] = base.get("avaliação", "dentro do esperado").astype(str).str.lower().map(perf_map).fillna(4)
+
+    # Normalizações
+    base["score_perf_inv"]   = 1 - norm_0_1(base["score_perf_raw"])
+    base["score_tempo_promo"]= norm_0_1(base["meses_desde_promocao"])
+    base["score_tempo_casa"] = norm_0_1(base.get("tempo_casa", 0))
+    base["score_merito"]     = norm_0_1(base["meses_desde_merito"])
+    base["score_tam_eq"]     = norm_0_1(base["tam_eq"])
+
+    # TRI
+    base["risco_turnover"] = (
+        0.30*base["score_perf_inv"] + 0.25*base["score_tempo_promo"] +
+        0.15*base["score_tempo_casa"] + 0.15*base["score_tam_eq"] +
+        0.15*base["score_merito"]
+    ) * 100
+    base["risco_turnover"] = base["risco_turnover"].clip(0, 100)
+
+    avg_risk = safe_mean(base["risco_turnover"])
+    pct_high = round((base["risco_turnover"] > 60).mean() * 100, 1)
+
+    c1, c2 = st.columns(2)
+    c1.metric("⚠️ Risco Médio (TRI)", avg_risk)
+    c2.metric("🚨 % Risco Alto", f"{pct_high}%")
+
+    # Risco médio por tempo sem promoção
+    bins = [0, 3, 6, 12, 24, np.inf]
+    labels = ["0-3m", "3-6m", "6-12m", "12-24m", "+24m"]
+    base["faixa_tempo_sem_promo"] = pd.cut(
+        pd.to_numeric(base["meses_desde_promocao"], errors="coerce").fillna(0),
+        bins=bins, labels=labels
+    )
+
+    risco_por_faixa = base.groupby("faixa_tempo_sem_promo")["risco_turnover"].mean().reset_index()
+    fig = px.line(risco_por_faixa, x="faixa_tempo_sem_promo", y="risco_turnover", markers=True, color_discrete_sequence=["#00FFFF"])
+    fig.update_layout(template="plotly_dark", title="📈 Risco Médio por Tempo sem Promoção", xaxis_title="Faixa", yaxis_title="Risco (0-100)")
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# =========================================================
+# RENDER DA VIEW SELECIONADA (usa df_filt)
+# =========================================================
+view = st.session_state["view"]
+if view == "overview":
+    view_overview(df_final.copy())
+elif view == "headcount":
+    view_headcount(df_final.copy())
+elif view == "turnover":
+    view_turnover(df_final.copy())
+elif view == "risk":
+    view_risk(df_final.copy())
+else:
+    view_overview(df_final.copy())
+
+
+
