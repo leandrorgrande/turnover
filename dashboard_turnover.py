@@ -175,100 +175,134 @@ with st.expander("🧩 Análise de Qualidade e Estrutura dos Dados", expanded=Fa
 
 
 # =========================================================
-# 🎛️ PAINEL DE FILTROS (LAYOUT MELHORADO)
+# 🎛️ FILTROS LATERAIS (INTELIGENTES E ADAPTATIVOS)
 # =========================================================
-st.markdown("""
-<style>
-.filter-card {
-    background: linear-gradient(135deg, #1a1f2b, #151922);
-    border-radius: 14px;
-    padding: 18px 22px;
-    margin-bottom: 10px;
-    box-shadow: 0 0 14px rgba(0,255,204,0.12);
-    border: 1px solid rgba(0,255,204,0.12);
-}
-.filter-label {
-    color: #00FFC8;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-    margin-bottom: 4px;
-    font-size: 14px;
-}
-</style>
-""", unsafe_allow_html=True)
+with st.sidebar:
+    st.header("🔎 Filtros Inteligentes")
+    st.caption("Os filtros se adaptam ao tipo e volume de dados.")
 
-with st.container():
-    st.markdown("### 🎛️ Filtros Globais")
+    df_filt = df.copy()
 
-    c1, c2, c3 = st.columns(3)
-    c4, c5, c6 = st.columns(3)
+    # Função auxiliar para contar opções
+    def get_unique(df, col):
+        if not col or col not in df.columns:
+            return []
+        vals = sorted([v for v in df[col].dropna().unique().tolist() if str(v).strip() != ""])
+        return vals
 
-    # --- EMPRESA ---
-    empresa_col = col_like(df, "empresa") or col_like(df, "nome empresa")
-    empresas = sorted(df[empresa_col].dropna().unique().tolist()) if empresa_col else []
-    with c1:
-        st.markdown('<div class="filter-card">', unsafe_allow_html=True)
-        st.markdown('<div class="filter-label">🏢 Empresa</div>', unsafe_allow_html=True)
-        empresa_sel = st.selectbox("", ["Todas"] + empresas)
-        st.markdown('</div>', unsafe_allow_html=True)
+    # -------------------------------
+    # EMPRESA
+    # -------------------------------
+    empresa_col = col_like(df_filt, "empresa") or col_like(df_filt, "nome empresa")
+    empresas = get_unique(df_filt, empresa_col)
+    if len(empresas) <= 5:
+        empresa_sel = st.radio("🏢 Empresa", ["Todas"] + empresas, horizontal=False)
+    else:
+        empresa_sel = st.selectbox("🏢 Empresa", ["Todas"] + empresas)
+    if empresa_sel != "Todas" and empresa_col:
+        df_filt = df_filt[df_filt[empresa_col] == empresa_sel]
 
-    # --- DEPARTAMENTO ---
-    dept_col = col_like(df, "departamento")
-    deptos = sorted(df[dept_col].dropna().unique().tolist()) if dept_col else []
-    with c2:
-        st.markdown('<div class="filter-card">', unsafe_allow_html=True)
-        st.markdown('<div class="filter-label">🏬 Departamento</div>', unsafe_allow_html=True)
-        dept_sel = st.multiselect("", deptos, default=deptos)
-        st.markdown('</div>', unsafe_allow_html=True)
+    # -------------------------------
+    # DEPARTAMENTO
+    # -------------------------------
+    dept_col = col_like(df_filt, "departamento")
+    deptos = get_unique(df_filt, dept_col)
+    if len(deptos) > 30:
+        dept_sel = st.multiselect("🏬 Departamento", deptos)
+    elif len(deptos) > 0:
+        dept_sel = st.selectbox("🏬 Departamento", ["Todos"] + deptos)
+    else:
+        dept_sel = "Todos"
 
-    # --- CARGO ---
-    cargo_col = col_like(df, "cargo")
-    cargos = sorted(df[cargo_col].dropna().unique().tolist()) if cargo_col else []
-    with c3:
-        st.markdown('<div class="filter-card">', unsafe_allow_html=True)
-        st.markdown('<div class="filter-label">👔 Cargo</div>', unsafe_allow_html=True)
-        cargo_sel = st.multiselect("", cargos, default=cargos)
-        st.markdown('</div>', unsafe_allow_html=True)
+    if dept_sel and dept_sel != "Todos" and dept_col:
+        if isinstance(dept_sel, list):
+            df_filt = df_filt[df_filt[dept_col].isin(dept_sel)]
+        else:
+            df_filt = df_filt[df_filt[dept_col] == dept_sel]
 
-    # --- TIPO CONTRATO ---
-    tipo_col = col_like(df, "tipo_contrato")
-    tipos = sorted(df[tipo_col].dropna().unique().tolist()) if tipo_col else []
-    with c4:
-        st.markdown('<div class="filter-card">', unsafe_allow_html=True)
-        st.markdown('<div class="filter-label">📑 Tipo de Contrato</div>', unsafe_allow_html=True)
-        tipo_sel = st.multiselect("", tipos, default=tipos)
-        st.markdown('</div>', unsafe_allow_html=True)
+    # -------------------------------
+    # CARGO
+    # -------------------------------
+    cargo_col = col_like(df_filt, "cargo")
+    cargos = get_unique(df_filt, cargo_col)
+    if len(cargos) > 20:
+        cargo_sel = st.multiselect("👔 Cargo", cargos)
+    elif len(cargos) > 0:
+        cargo_sel = st.selectbox("👔 Cargo", ["Todos"] + cargos)
+    else:
+        cargo_sel = "Todos"
+    if cargo_sel and cargo_sel != "Todos" and cargo_col:
+        if isinstance(cargo_sel, list):
+            df_filt = df_filt[df_filt[cargo_col].isin(cargo_sel)]
+        else:
+            df_filt = df_filt[df_filt[cargo_col] == cargo_sel]
 
-    # --- ANO ---
-    adm_col = col_like(df, "data de admissão")
-    desl_col = col_like(df, "data de desligamento")
+    # -------------------------------
+    # GESTOR
+    # -------------------------------
+    gestor_col = col_like(df_filt, "matricula do gestor") or col_like(df_filt, "gestor")
+    gestores = get_unique(df_filt, gestor_col)
+    if len(gestores) > 10:
+        gestor_sel = st.multiselect("👤 Gestor", gestores)
+    elif len(gestores) > 0:
+        gestor_sel = st.selectbox("👤 Gestor", ["Todos"] + gestores)
+    else:
+        gestor_sel = "Todos"
+    if gestor_sel and gestor_sel != "Todos" and gestor_col:
+        if isinstance(gestor_sel, list):
+            df_filt = df_filt[df_filt[gestor_col].isin(gestor_sel)]
+        else:
+            df_filt = df_filt[df_filt[gestor_col] == gestor_sel]
 
-    anos_disp = sorted(
-        pd.unique(
-            df[adm_col].dropna().dt.year.tolist() +
-            (df[desl_col].dropna().dt.year.tolist() if desl_col else [])
-        )
-    ) if adm_col else []
-    with c5:
-        st.markdown('<div class="filter-card">', unsafe_allow_html=True)
-        st.markdown('<div class="filter-label">📆 Ano de Referência</div>', unsafe_allow_html=True)
-        ano_sel = st.multiselect("", anos_disp, default=anos_disp)
-        st.markdown('</div>', unsafe_allow_html=True)
+    # -------------------------------
+    # TIPO DE CONTRATO
+    # -------------------------------
+    tipo_col = col_like(df_filt, "tipo_contrato")
+    tipos = get_unique(df_filt, tipo_col)
+    if len(tipos) <= 4:
+        tipo_sel = st.radio("📑 Tipo Contrato", ["Todos"] + tipos, horizontal=True)
+    else:
+        tipo_sel = st.multiselect("📑 Tipo Contrato", tipos)
+    if tipo_sel and tipo_sel != "Todos" and tipo_col:
+        if isinstance(tipo_sel, list):
+            df_filt = df_filt[df_filt[tipo_col].isin(tipo_sel)]
+        else:
+            df_filt = df_filt[df_filt[tipo_col] == tipo_sel]
 
-    # --- MÊS ---
+    # -------------------------------
+    # ANO / MÊS
+    # -------------------------------
+    adm_col = col_like(df_filt, "data de admissão")
+    desl_col = col_like(df_filt, "data de desligamento")
+
+    df_filt["ano"] = pd.to_datetime(df_filt[adm_col], errors="coerce").dt.year.fillna(
+        pd.to_datetime(df_filt[desl_col], errors="coerce").dt.year
+    )
+    anos = sorted([int(a) for a in df_filt["ano"].dropna().unique()])
+    if anos:
+        ano_min, ano_max = min(anos), max(anos)
+        ano_sel = st.slider("📆 Ano", ano_min, ano_max, (ano_min, ano_max))
+        df_filt = df_filt[df_filt["ano"].between(ano_sel[0], ano_sel[1])]
+
     meses = [
-        "Janeiro","Fevereiro","Março","Abril","Maio","Junho",
-        "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"
+        "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+        "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
     ]
-    with c6:
-        st.markdown('<div class="filter-card">', unsafe_allow_html=True)
-        st.markdown('<div class="filter-label">🗓️ Mês</div>', unsafe_allow_html=True)
-        mes_sel = st.multiselect("", meses, default=meses)
-        st.markdown('</div>', unsafe_allow_html=True)
+    mes_sel = st.selectbox("🗓️ Mês de Referência", ["Todos"] + meses)
+    if mes_sel != "Todos":
+        df_filt["mes"] = pd.to_datetime(df_filt[adm_col], errors="coerce").dt.month_name(locale="pt_BR")
+        df_filt = df_filt[df_filt["mes"] == mes_sel]
 
-    # --- BOTÃO DE APLICAÇÃO ---
-    st.markdown("<br>", unsafe_allow_html=True)
-    apply = st.button("🚀 Aplicar Filtros", type="primary")
+    # -------------------------------
+    # BUSCA POR NOME (Texto livre)
+    # -------------------------------
+    nome_col = col_like(df_filt, "nome")
+    busca_nome = st.text_input("🔍 Buscar colaborador")
+    if busca_nome and nome_col:
+        df_filt = df_filt[df_filt[nome_col].str.contains(busca_nome, case=False, na=False)]
+
+    st.divider()
+    st.success(f"📊 {len(df_filt):,} registros após aplicar filtros.")
 
 # =========================================================
 # APLICAÇÃO DOS FILTROS AO DATAFRAME
