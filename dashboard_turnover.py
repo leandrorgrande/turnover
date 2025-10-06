@@ -175,58 +175,119 @@ with st.expander("🧩 Análise de Qualidade e Estrutura dos Dados", expanded=Fa
 
 
 # =========================================================
-# FILTROS LATERAIS (corrigido)
+# 🎛️ FILTROS LATERAIS (DINÂMICOS E INTERDEPENDENTES)
 # =========================================================
 with st.sidebar:
-    st.header("🔎 Filtros Globais")
+    st.header("🔎 Filtros Globais e Contexto")
 
-    empresas = empresa["nome empresa"].dropna().unique().tolist() if not empresa.empty else []
-    empresa_sel = st.selectbox("Empresa", empresas, index=0 if empresas else None)
+    # Copia inicial dos dados
+    df_filt = df.copy()
 
-    adm_col = col_like(df, "data de admissão")
-    desl_col = col_like(df, "data de desligamento")
-
-    data_min = pd.to_datetime(df[adm_col], errors="coerce").min() if adm_col else None
-    data_max = pd.to_datetime(df[desl_col], errors="coerce").max() if desl_col and df[desl_col].notna().any() else datetime.now()
-
-    periodo = st.date_input(
-        "Período de Análise",
-        value=(
-            data_min.date() if (data_min is not None and not pd.isna(data_min)) else datetime(2023,1,1).date(),
-            data_max.date() if not pd.isna(pd.to_datetime(data_max)) else datetime.now().date()
-        )
-    )
-
-    dept_col = col_like(df, "departamento")
-    deptos = sorted(df[dept_col].dropna().unique().tolist()) if dept_col else []
-    dept_sel = st.multiselect("Departamentos", deptos, default=deptos)
-
-    tipo_col = col_like(df, "tipo_contrato")
-    tipos = sorted(df[tipo_col].dropna().unique().tolist()) if tipo_col else []
-    tipo_sel = st.multiselect("Tipo de Contrato", tipos, default=tipos)
-
-# Aplicação dos filtros
-df_filt = df.copy()
-
-# 1️⃣ filtro de empresa
-if empresa_sel:
+    # -------------------------------
+    # EMPRESA
+    # -------------------------------
     empresa_col = col_like(df_filt, "empresa") or col_like(df_filt, "nome empresa")
-    if empresa_col:
+    empresas = sorted(df_filt[empresa_col].dropna().unique().tolist()) if empresa_col else []
+    empresa_sel = st.selectbox("🏢 Empresa", ["Todas"] + empresas)
+
+    if empresa_col and empresa_sel != "Todas":
         df_filt = df_filt[df_filt[empresa_col] == empresa_sel]
 
-# 2️⃣ filtro de departamento
-if dept_col and dept_sel:
-    df_filt = df_filt[df_filt[dept_col].isin(dept_sel)]
+    # -------------------------------
+    # DEPARTAMENTO
+    # -------------------------------
+    dept_col = col_like(df_filt, "departamento")
+    deptos = sorted(df_filt[dept_col].dropna().unique().tolist()) if dept_col else []
+    dept_sel = st.multiselect("🏬 Departamentos", deptos, default=deptos)
+    if dept_col and dept_sel:
+        df_filt = df_filt[df_filt[dept_col].isin(dept_sel)]
 
-# 3️⃣ filtro de tipo de contrato
-if tipo_col and tipo_sel:
-    df_filt = df_filt[df_filt[tipo_col].isin(tipo_sel)]
+    # -------------------------------
+    # CARGO
+    # -------------------------------
+    cargo_col = col_like(df_filt, "cargo")
+    cargos = sorted(df_filt[cargo_col].dropna().unique().tolist()) if cargo_col else []
+    cargo_sel = st.multiselect("👔 Cargos", cargos, default=cargos)
+    if cargo_col and cargo_sel:
+        df_filt = df_filt[df_filt[cargo_col].isin(cargo_sel)]
 
-# 4️⃣ filtro de período
-if adm_col:
-    dt_ini = pd.to_datetime(periodo[0])
-    dt_fim = pd.to_datetime(periodo[1])
-    df_filt = df_filt[df_filt[adm_col].between(dt_ini, dt_fim, inclusive="both")]
+    # -------------------------------
+    # GESTOR
+    # -------------------------------
+    gestor_col = col_like(df_filt, "matricula do gestor") or col_like(df_filt, "gestor")
+    gestores = sorted(df_filt[gestor_col].dropna().unique().tolist()) if gestor_col else []
+    gestor_sel = st.multiselect("👤 Gestores", gestores, default=gestores)
+    if gestor_col and gestor_sel:
+        df_filt = df_filt[df_filt[gestor_col].isin(gestor_sel)]
+
+    # -------------------------------
+    # TIPO DE CONTRATO
+    # -------------------------------
+    tipo_col = col_like(df_filt, "tipo_contrato")
+    tipos = sorted(df_filt[tipo_col].dropna().unique().tolist()) if tipo_col else []
+    tipo_sel = st.multiselect("📑 Tipo de Contrato", tipos, default=tipos)
+    if tipo_col and tipo_sel:
+        df_filt = df_filt[df_filt[tipo_col].isin(tipo_sel)]
+
+    # -------------------------------
+    # ANO E MÊS
+    # -------------------------------
+    adm_col = col_like(df_filt, "data de admissão")
+    desl_col = col_like(df_filt, "data de desligamento")
+
+    # cria colunas auxiliares
+    if adm_col:
+        df_filt["ano_admissao"] = pd.to_datetime(df_filt[adm_col], errors="coerce").dt.year
+        df_filt["mes_admissao"] = pd.to_datetime(df_filt[adm_col], errors="coerce").dt.month_name()
+    if desl_col:
+        df_filt["ano_desligamento"] = pd.to_datetime(df_filt[desl_col], errors="coerce").dt.year
+        df_filt["mes_desligamento"] = pd.to_datetime(df_filt[desl_col], errors="coerce").dt.month_name()
+
+    anos_disp = sorted(pd.unique(df_filt["ano_admissao"].dropna().astype(int).tolist() +
+                                 df_filt.get("ano_desligamento", pd.Series([], dtype=int)).dropna().astype(int).tolist()))
+    ano_sel = st.multiselect("📆 Ano de Admissão / Desligamento", anos_disp, default=anos_disp)
+    if ano_sel:
+        df_filt = df_filt[
+            (df_filt.get("ano_admissao").isin(ano_sel)) |
+            (df_filt.get("ano_desligamento").isin(ano_sel))
+        ]
+
+    meses_disp = sorted(set(df_filt.get("mes_admissao", pd.Series(dtype=str)).dropna().tolist() +
+                            df_filt.get("mes_desligamento", pd.Series(dtype=str)).dropna().tolist()))
+    mes_sel = st.multiselect("🗓️ Mês de Admissão / Desligamento", meses_disp, default=meses_disp)
+    if mes_sel:
+        df_filt = df_filt[
+            (df_filt.get("mes_admissao").isin(mes_sel)) |
+            (df_filt.get("mes_desligamento").isin(mes_sel))
+        ]
+
+    # -------------------------------
+    # PERÍODO COMPLETO (CALENDÁRIO)
+    # -------------------------------
+    data_min = (
+        pd.to_datetime(df_filt[adm_col], errors="coerce").min()
+        if adm_col and not df_filt.empty
+        else datetime(2023, 1, 1)
+    )
+    data_max = (
+        pd.to_datetime(df_filt[desl_col], errors="coerce").max()
+        if desl_col and df_filt[desl_col].notna().any()
+        else datetime.now()
+    )
+
+    periodo = st.date_input(
+        "📅 Intervalo de Datas",
+        value=(
+            data_min.date() if not pd.isna(data_min) else datetime(2023, 1, 1).date(),
+            data_max.date() if not pd.isna(data_max) else datetime.now().date()
+        ),
+    )
+
+    if adm_col:
+        dt_ini, dt_fim = map(pd.to_datetime, periodo)
+        df_filt = df_filt[df_filt[adm_col].between(dt_ini, dt_fim, inclusive="both")]
+
+st.success(f"📊 {len(df_filt):,} registros após aplicar filtros.")
 
 # =========================================================
 # 🧩 ANÁLISE DE QUALIDADE E ESTRUTURA DOS DADOS
