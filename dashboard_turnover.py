@@ -269,29 +269,123 @@ with st.sidebar:
         else:
             df_filt = df_filt[df_filt[tipo_col] == tipo_sel]
 
-    # -------------------------------
-    # ANO / MÊS
-    # -------------------------------
-    adm_col = col_like(df_filt, "data de admissão")
-    desl_col = col_like(df_filt, "data de desligamento")
+# -------------------------------
+# 📆 FILTROS DE ANO E MÊS (ADMISSÃO / DESLIGAMENTO)
+# -------------------------------
+adm_col = col_like(df_filt, "data de admissão")
+desl_col = col_like(df_filt, "data de desligamento")
 
-    df_filt["ano"] = pd.to_datetime(df_filt[adm_col], errors="coerce").dt.year.fillna(
-        pd.to_datetime(df_filt[desl_col], errors="coerce").dt.year
+# --- Mapeamento seguro dos meses em PT-BR ---
+meses_map = {
+    1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+    5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+    9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+}
+
+# -------------------------------
+# ANO DE ADMISSÃO
+# -------------------------------
+if adm_col:
+    df_filt["ano_admissao"] = pd.to_datetime(df_filt[adm_col], errors="coerce").dt.year
+    anos_adm = sorted([int(a) for a in df_filt["ano_admissao"].dropna().unique()])
+    if anos_adm:
+        ano_min_adm, ano_max_adm = min(anos_adm), max(anos_adm)
+        ano_sel_adm = st.slider("📅 Ano de Admissão", ano_min_adm, ano_max_adm, (ano_min_adm, ano_max_adm))
+        df_filt = df_filt[df_filt["ano_admissao"].between(ano_sel_adm[0], ano_sel_adm[1])]
+
+# -------------------------------
+# ANO DE DESLIGAMENTO
+# -------------------------------
+if desl_col:
+    df_filt["ano_desligamento"] = pd.to_datetime(df_filt[desl_col], errors="coerce").dt.year
+    anos_desl = sorted([int(a) for a in df_filt["ano_desligamento"].dropna().unique()])
+    if anos_desl:
+        ano_min_desl, ano_max_desl = min(anos_desl), max(anos_desl)
+        ano_sel_desl = st.slider("📆 Ano de Desligamento", ano_min_desl, ano_max_desl, (ano_min_desl, ano_max_desl))
+        df_filt = df_filt[df_filt["ano_desligamento"].between(ano_sel_desl[0], ano_sel_desl[1])]
+
+# -------------------------------
+# MÊS DE ADMISSÃO
+# -------------------------------
+if adm_col:
+    df_filt["mes_admissao"] = (
+        pd.to_datetime(df_filt[adm_col], errors="coerce").dt.month.map(meses_map)
     )
-    anos = sorted([int(a) for a in df_filt["ano"].dropna().unique()])
-    if anos:
-        ano_min, ano_max = min(anos), max(anos)
-        ano_sel = st.slider("📆 Ano", ano_min, ano_max, (ano_min, ano_max))
-        df_filt = df_filt[df_filt["ano"].between(ano_sel[0], ano_sel[1])]
+    meses_adm = [v for v in meses_map.values() if v in df_filt["mes_admissao"].dropna().unique().tolist()]
+    mes_sel_adm = st.selectbox("🗓️ Mês de Admissão", ["Todos"] + meses_adm)
+    if mes_sel_adm != "Todos":
+        df_filt = df_filt[df_filt["mes_admissao"] == mes_sel_adm]
 
-    meses = [
-        "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-        "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
-    ]
-    mes_sel = st.selectbox("🗓️ Mês de Referência", ["Todos"] + meses)
-    if mes_sel != "Todos":
-        df_filt["mes"] = pd.to_datetime(df_filt[adm_col], errors="coerce").dt.month_name(locale="pt_BR")
-        df_filt = df_filt[df_filt["mes"] == mes_sel]
+# -------------------------------
+# MÊS DE DESLIGAMENTO
+# -------------------------------
+if desl_col:
+    df_filt["mes_desligamento"] = (
+        pd.to_datetime(df_filt[desl_col], errors="coerce").dt.month.map(meses_map)
+    )
+    meses_desl = [v for v in meses_map.values() if v in df_filt["mes_desligamento"].dropna().unique().tolist()]
+    mes_sel_desl = st.selectbox("📆 Mês de Desligamento", ["Todos"] + meses_desl)
+    if mes_sel_desl != "Todos":
+        df_filt = df_filt[df_filt["mes_desligamento"] == mes_sel_desl]
+
+# -------------------------------
+# 🧭 FILTRO DE COMPETÊNCIA (ano + mês de referência)
+# -------------------------------
+st.divider()
+st.markdown("### 🧭 Competência de Referência (para Turnover)")
+
+# Seletores de competência
+anos_comp = sorted(set(df_filt.get("ano_admissao", pd.Series()).dropna().astype(int).tolist() +
+                       df_filt.get("ano_desligamento", pd.Series()).dropna().astype(int).tolist()))
+meses_map = {
+    1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+    5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+    9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+}
+meses_inv = {v: k for k, v in meses_map.items()}
+
+colA, colB = st.columns(2)
+with colA:
+    ano_comp_sel = st.selectbox("📆 Ano de Competência", anos_comp, index=len(anos_comp)-1 if anos_comp else 0)
+with colB:
+    mes_comp_sel = st.selectbox("🗓️ Mês de Competência", list(meses_map.values()), index=datetime.now().month-1)
+
+# Calcula o intervalo da competência
+if ano_comp_sel and mes_comp_sel:
+    mes_num = meses_inv[mes_comp_sel]
+    inicio_comp = pd.Timestamp(ano_comp_sel, mes_num, 1)
+    fim_comp = (inicio_comp + pd.offsets.MonthEnd(1))
+
+    # Marca quem estava ativo nesse mês
+    if adm_col:
+        adm_dates = pd.to_datetime(df_filt[adm_col], errors="coerce")
+    else:
+        adm_dates = pd.Series([pd.NaT]*len(df_filt))
+    if desl_col:
+        desl_dates = pd.to_datetime(df_filt[desl_col], errors="coerce")
+    else:
+        desl_dates = pd.Series([pd.NaT]*len(df_filt))
+
+    df_filt["ativo_na_competencia"] = (
+        (adm_dates <= fim_comp) &
+        ((desl_dates.isna()) | (desl_dates >= inicio_comp))
+    )
+
+    # Marca quem desligou dentro do mês
+    df_filt["desligado_no_mes"] = (
+        (desl_dates >= inicio_comp) &
+        (desl_dates <= fim_comp)
+    )
+
+    # Filtra apenas quem está ativo ou desligado dentro do mês
+    df_filt = df_filt[df_filt["ativo_na_competencia"] | df_filt["desligado_no_mes"]]
+
+    st.info(
+        f"📅 Competência selecionada: **{mes_comp_sel}/{ano_comp_sel}**  \n"
+        f"👥 Colaboradores ativos no período: {df_filt['ativo_na_competencia'].sum()}  \n"
+        f"🏁 Desligados no mês: {df_filt['desligado_no_mes'].sum()}"
+    )
+
 
     # -------------------------------
     # BUSCA POR NOME (Texto livre)
