@@ -637,12 +637,12 @@ def view_risk(dfv):
 # =========================================================
 view = st.session_state["view"]
 if view == "overview":
-    view_overview(df_filt.copy())
+    view_overview(df_final.copy())
 elif view == "headcount":
-    view_headcount(df_filt.copy())
+    view_headcount(df_final.copy())
 elif view == "turnover":
-    view_turnover(df_filt.copy())
+    view_turnover(df_final.copy())
 elif view == "risk":
-    view_risk(df_filt.copy())
+    view_risk(df_final.copy())
 else:
-    view_overview(df_filt.copy())
+    view_overview(df_final.copy())
