@@ -196,7 +196,7 @@ with st.sidebar:
     empresa_col = col_like(df_filt, "empresa") or col_like(df_filt, "nome empresa")
     empresas = get_unique(df_filt, empresa_col)
     if len(empresas) <= 5:
-        empresa_sel = st.radio("🏢 Empresa", ["Todas"] + empresas, horizontal=False)
+        empresa_sel = st.radio("🏢 Empresa", ["Todas"] + empresas)
     else:
         empresa_sel = st.selectbox("🏢 Empresa", ["Todas"] + empresas)
     if empresa_sel != "Todas" and empresa_col:
@@ -209,11 +209,8 @@ with st.sidebar:
     deptos = get_unique(df_filt, dept_col)
     if len(deptos) > 30:
         dept_sel = st.multiselect("🏬 Departamento", deptos)
-    elif len(deptos) > 0:
-        dept_sel = st.selectbox("🏬 Departamento", ["Todos"] + deptos)
     else:
-        dept_sel = "Todos"
-
+        dept_sel = st.selectbox("🏬 Departamento", ["Todos"] + deptos) if deptos else "Todos"
     if dept_sel and dept_sel != "Todos" and dept_col:
         if isinstance(dept_sel, list):
             df_filt = df_filt[df_filt[dept_col].isin(dept_sel)]
@@ -227,10 +224,8 @@ with st.sidebar:
     cargos = get_unique(df_filt, cargo_col)
     if len(cargos) > 20:
         cargo_sel = st.multiselect("👔 Cargo", cargos)
-    elif len(cargos) > 0:
-        cargo_sel = st.selectbox("👔 Cargo", ["Todos"] + cargos)
     else:
-        cargo_sel = "Todos"
+        cargo_sel = st.selectbox("👔 Cargo", ["Todos"] + cargos) if cargos else "Todos"
     if cargo_sel and cargo_sel != "Todos" and cargo_col:
         if isinstance(cargo_sel, list):
             df_filt = df_filt[df_filt[cargo_col].isin(cargo_sel)]
@@ -244,10 +239,8 @@ with st.sidebar:
     gestores = get_unique(df_filt, gestor_col)
     if len(gestores) > 10:
         gestor_sel = st.multiselect("👤 Gestor", gestores)
-    elif len(gestores) > 0:
-        gestor_sel = st.selectbox("👤 Gestor", ["Todos"] + gestores)
     else:
-        gestor_sel = "Todos"
+        gestor_sel = st.selectbox("👤 Gestor", ["Todos"] + gestores) if gestores else "Todos"
     if gestor_sel and gestor_sel != "Todos" and gestor_col:
         if isinstance(gestor_sel, list):
             df_filt = df_filt[df_filt[gestor_col].isin(gestor_sel)]
@@ -269,127 +262,90 @@ with st.sidebar:
         else:
             df_filt = df_filt[df_filt[tipo_col] == tipo_sel]
 
-# -------------------------------
-# 📆 FILTROS DE ANO E MÊS (ADMISSÃO / DESLIGAMENTO)
-# -------------------------------
-adm_col = col_like(df_filt, "data de admissão")
-desl_col = col_like(df_filt, "data de desligamento")
+    # ========================================================
+    # 📆 FILTROS DE ANO / MÊS ADMISSÃO / DESLIGAMENTO
+    # ========================================================
+    adm_col = col_like(df_filt, "data de admissão")
+    desl_col = col_like(df_filt, "data de desligamento")
 
-# --- Mapeamento seguro dos meses em PT-BR ---
-meses_map = {
-    1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
-    5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
-    9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
-}
+    meses_map = {
+        1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+        5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+        9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+    }
 
-# -------------------------------
-# ANO DE ADMISSÃO
-# -------------------------------
-if adm_col:
-    df_filt["ano_admissao"] = pd.to_datetime(df_filt[adm_col], errors="coerce").dt.year
-    anos_adm = sorted([int(a) for a in df_filt["ano_admissao"].dropna().unique()])
-    if anos_adm:
-        ano_min_adm, ano_max_adm = min(anos_adm), max(anos_adm)
-        ano_sel_adm = st.slider("📅 Ano de Admissão", ano_min_adm, ano_max_adm, (ano_min_adm, ano_max_adm))
-        df_filt = df_filt[df_filt["ano_admissao"].between(ano_sel_adm[0], ano_sel_adm[1])]
+    # Ano de admissão
+    if adm_col:
+        df_filt["ano_admissao"] = pd.to_datetime(df_filt[adm_col], errors="coerce").dt.year
+        anos_adm = sorted([int(a) for a in df_filt["ano_admissao"].dropna().unique()])
+        if anos_adm:
+            ano_sel_adm = st.slider("📅 Ano de Admissão", min(anos_adm), max(anos_adm),
+                                    (min(anos_adm), max(anos_adm)))
+            df_filt = df_filt[df_filt["ano_admissao"].between(ano_sel_adm[0], ano_sel_adm[1])]
 
-# -------------------------------
-# ANO DE DESLIGAMENTO
-# -------------------------------
-if desl_col:
-    df_filt["ano_desligamento"] = pd.to_datetime(df_filt[desl_col], errors="coerce").dt.year
-    anos_desl = sorted([int(a) for a in df_filt["ano_desligamento"].dropna().unique()])
-    if anos_desl:
-        ano_min_desl, ano_max_desl = min(anos_desl), max(anos_desl)
-        ano_sel_desl = st.slider("📆 Ano de Desligamento", ano_min_desl, ano_max_desl, (ano_min_desl, ano_max_desl))
-        df_filt = df_filt[df_filt["ano_desligamento"].between(ano_sel_desl[0], ano_sel_desl[1])]
+    # Ano de desligamento
+    if desl_col:
+        df_filt["ano_desligamento"] = pd.to_datetime(df_filt[desl_col], errors="coerce").dt.year
+        anos_desl = sorted([int(a) for a in df_filt["ano_desligamento"].dropna().unique()])
+        if anos_desl:
+            ano_sel_desl = st.slider("📆 Ano de Desligamento", min(anos_desl), max(anos_desl),
+                                     (min(anos_desl), max(anos_desl)))
+            df_filt = df_filt[df_filt["ano_desligamento"].between(ano_sel_desl[0], ano_sel_desl[1])]
 
-# -------------------------------
-# MÊS DE ADMISSÃO
-# -------------------------------
-if adm_col:
-    df_filt["mes_admissao"] = (
-        pd.to_datetime(df_filt[adm_col], errors="coerce").dt.month.map(meses_map)
-    )
-    meses_adm = [v for v in meses_map.values() if v in df_filt["mes_admissao"].dropna().unique().tolist()]
-    mes_sel_adm = st.selectbox("🗓️ Mês de Admissão", ["Todos"] + meses_adm)
-    if mes_sel_adm != "Todos":
-        df_filt = df_filt[df_filt["mes_admissao"] == mes_sel_adm]
+    # Mês de admissão
+    if adm_col:
+        df_filt["mes_admissao"] = pd.to_datetime(df_filt[adm_col], errors="coerce").dt.month.map(meses_map)
+        meses_adm = [v for v in meses_map.values() if v in df_filt["mes_admissao"].dropna().unique().tolist()]
+        mes_sel_adm = st.selectbox("🗓️ Mês de Admissão", ["Todos"] + meses_adm)
+        if mes_sel_adm != "Todos":
+            df_filt = df_filt[df_filt["mes_admissao"] == mes_sel_adm]
 
-# -------------------------------
-# MÊS DE DESLIGAMENTO
-# -------------------------------
-if desl_col:
-    df_filt["mes_desligamento"] = (
-        pd.to_datetime(df_filt[desl_col], errors="coerce").dt.month.map(meses_map)
-    )
-    meses_desl = [v for v in meses_map.values() if v in df_filt["mes_desligamento"].dropna().unique().tolist()]
-    mes_sel_desl = st.selectbox("📆 Mês de Desligamento", ["Todos"] + meses_desl)
-    if mes_sel_desl != "Todos":
-        df_filt = df_filt[df_filt["mes_desligamento"] == mes_sel_desl]
+    # Mês de desligamento
+    if desl_col:
+        df_filt["mes_desligamento"] = pd.to_datetime(df_filt[desl_col], errors="coerce").dt.month.map(meses_map)
+        meses_desl = [v for v in meses_map.values() if v in df_filt["mes_desligamento"].dropna().unique().tolist()]
+        mes_sel_desl = st.selectbox("📆 Mês de Desligamento", ["Todos"] + meses_desl)
+        if mes_sel_desl != "Todos":
+            df_filt = df_filt[df_filt["mes_desligamento"] == mes_sel_desl]
 
-# -------------------------------
-# 🧭 FILTRO DE COMPETÊNCIA (ano + mês de referência)
-# -------------------------------
-st.divider()
-st.markdown("### 🧭 Competência de Referência (para Turnover)")
+    # ========================================================
+    # 🧭 FILTRO DE COMPETÊNCIA
+    # ========================================================
+    st.markdown("### 🧭 Competência de Referência (Turnover)")
+    anos_comp = sorted(set(
+        df_filt.get("ano_admissao", pd.Series()).dropna().astype(int).tolist() +
+        df_filt.get("ano_desligamento", pd.Series()).dropna().astype(int).tolist()
+    ))
+    meses_inv = {v: k for k, v in meses_map.items()}
 
-# Seletores de competência
-anos_comp = sorted(set(df_filt.get("ano_admissao", pd.Series()).dropna().astype(int).tolist() +
-                       df_filt.get("ano_desligamento", pd.Series()).dropna().astype(int).tolist()))
-meses_map = {
-    1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
-    5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
-    9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
-}
-meses_inv = {v: k for k, v in meses_map.items()}
-
-colA, colB = st.columns(2)
-with colA:
     ano_comp_sel = st.selectbox("📆 Ano de Competência", anos_comp, index=len(anos_comp)-1 if anos_comp else 0)
-with colB:
     mes_comp_sel = st.selectbox("🗓️ Mês de Competência", list(meses_map.values()), index=datetime.now().month-1)
 
-# Calcula o intervalo da competência
-if ano_comp_sel and mes_comp_sel:
-    mes_num = meses_inv[mes_comp_sel]
-    inicio_comp = pd.Timestamp(ano_comp_sel, mes_num, 1)
-    fim_comp = (inicio_comp + pd.offsets.MonthEnd(1))
+    if ano_comp_sel and mes_comp_sel:
+        mes_num = meses_inv[mes_comp_sel]
+        inicio_comp = pd.Timestamp(ano_comp_sel, mes_num, 1)
+        fim_comp = (inicio_comp + pd.offsets.MonthEnd(1))
 
-    # Marca quem estava ativo nesse mês
-    if adm_col:
-        adm_dates = pd.to_datetime(df_filt[adm_col], errors="coerce")
-    else:
-        adm_dates = pd.Series([pd.NaT]*len(df_filt))
-    if desl_col:
-        desl_dates = pd.to_datetime(df_filt[desl_col], errors="coerce")
-    else:
-        desl_dates = pd.Series([pd.NaT]*len(df_filt))
+        adm_dates = pd.to_datetime(df_filt[adm_col], errors="coerce") if adm_col else pd.Series([pd.NaT]*len(df_filt))
+        desl_dates = pd.to_datetime(df_filt[desl_col], errors="coerce") if desl_col else pd.Series([pd.NaT]*len(df_filt))
 
-    df_filt["ativo_na_competencia"] = (
-        (adm_dates <= fim_comp) &
-        ((desl_dates.isna()) | (desl_dates >= inicio_comp))
-    )
+        df_filt["ativo_na_competencia"] = (
+            (adm_dates <= fim_comp) &
+            ((desl_dates.isna()) | (desl_dates >= inicio_comp))
+        )
+        df_filt["desligado_no_mes"] = (
+            (desl_dates >= inicio_comp) & (desl_dates <= fim_comp)
+        )
+        df_filt = df_filt[df_filt["ativo_na_competencia"] | df_filt["desligado_no_mes"]]
 
-    # Marca quem desligou dentro do mês
-    df_filt["desligado_no_mes"] = (
-        (desl_dates >= inicio_comp) &
-        (desl_dates <= fim_comp)
-    )
+        st.info(
+            f"📅 Competência: **{mes_comp_sel}/{ano_comp_sel}**  \n"
+            f"👥 Ativos: {df_filt['ativo_na_competencia'].sum()} | 🏁 Desligados: {df_filt['desligado_no_mes'].sum()}"
+        )
 
-    # Filtra apenas quem está ativo ou desligado dentro do mês
-    df_filt = df_filt[df_filt["ativo_na_competencia"] | df_filt["desligado_no_mes"]]
-
-    st.info(
-        f"📅 Competência selecionada: **{mes_comp_sel}/{ano_comp_sel}**  \n"
-        f"👥 Colaboradores ativos no período: {df_filt['ativo_na_competencia'].sum()}  \n"
-        f"🏁 Desligados no mês: {df_filt['desligado_no_mes'].sum()}"
-    )
-
-
-    # -------------------------------
-    # BUSCA POR NOME (Texto livre)
-    # -------------------------------
+    # ========================================================
+    # 🔍 BUSCA POR NOME
+    # ========================================================
     nome_col = col_like(df_filt, "nome")
     busca_nome = st.text_input("🔍 Buscar colaborador")
     if busca_nome and nome_col:
@@ -397,11 +353,6 @@ if ano_comp_sel and mes_comp_sel:
 
     st.divider()
     st.success(f"📊 {len(df_filt):,} registros após aplicar filtros.")
-
-
-st.divider()
-st.caption(f"📊 {len(df_filt):,} registros após aplicar filtros.")
-
 # =========================================================
 # 🧩 ANÁLISE DE QUALIDADE E ESTRUTURA DOS DADOS
 # =========================================================
