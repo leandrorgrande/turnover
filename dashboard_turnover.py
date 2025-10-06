@@ -304,32 +304,6 @@ with st.sidebar:
     st.divider()
     st.success(f"📊 {len(df_filt):,} registros após aplicar filtros.")
 
-# =========================================================
-# APLICAÇÃO DOS FILTROS AO DATAFRAME
-# =========================================================
-if apply:
-    df_filt = df.copy()
-
-    if empresa_sel != "Todas" and empresa_col:
-        df_filt = df_filt[df_filt[empresa_col] == empresa_sel]
-    if dept_col and dept_sel:
-        df_filt = df_filt[df_filt[dept_col].isin(dept_sel)]
-    if cargo_col and cargo_sel:
-        df_filt = df_filt[df_filt[cargo_col].isin(cargo_sel)]
-    if tipo_col and tipo_sel:
-        df_filt = df_filt[df_filt[tipo_col].isin(tipo_sel)]
-
-    if adm_col:
-        df_filt["ano_adm"] = pd.to_datetime(df_filt[adm_col], errors="coerce").dt.year
-        df_filt["mes_adm"] = pd.to_datetime(df_filt[adm_col], errors="coerce").dt.month_name()
-        if ano_sel:
-            df_filt = df_filt[df_filt["ano_adm"].isin(ano_sel)]
-        if mes_sel:
-            df_filt = df_filt[df_filt["mes_adm"].isin(mes_sel)]
-
-    st.success(f"📊 {len(df_filt):,} registros após aplicar filtros.")
-else:
-    df_filt = df.copy()
 
 st.divider()
 st.caption(f"📊 {len(df_filt):,} registros após aplicar filtros.")
