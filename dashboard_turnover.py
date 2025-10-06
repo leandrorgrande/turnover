@@ -131,29 +131,6 @@ if not uploaded:
 
 with st.expander("🧩 Análise de Qualidade e Estrutura dos Dados", expanded=False):
 
-    st.markdown(
-        "Visualize aqui como o arquivo foi carregado e validado. "
-        "Essa etapa ocorre automaticamente antes de calcular os indicadores."
-    )
-
-    @st.cache_data(show_spinner=True)
-    def load_and_prepare(file):
-        """Carrega e trata os dados de forma cacheada e segura."""
-        sheets = load_excel(file)
-
-        empresa = sheets.get("empresa", pd.DataFrame())
-        colab = sheets.get("colaboradores", pd.DataFrame())
-        perf = sheets.get("performance", pd.DataFrame())
-
-        expected_cols = {
-            "empresa": ["nome empresa", "cnpj", "unidade", "cidade", "uf"],
-            "colaboradores": [
-                "matricula", "nome", "departamento", "cargo", "matricula do gestor",
-                "tipo_contrato", "genero", "data de admissão", "data de desligamento",
-                "motivo de desligamento", "ultima promoção", "ultimo mérito"
-            ],
-            "performance": ["matricula", "avaliação", "data de encerramento do ciclo"]
-        }
 
         # Limpeza e alertas
         empresa = clean_and_warn(empresa, expected_cols["empresa"], "empresa")
