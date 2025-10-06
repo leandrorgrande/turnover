@@ -331,6 +331,9 @@ if apply:
 else:
     df_filt = df.copy()
 
+st.divider()
+st.caption(f"📊 {len(df_filt):,} registros após aplicar filtros.")
+
 # =========================================================
 # 🧩 ANÁLISE DE QUALIDADE E ESTRUTURA DOS DADOS
 # =========================================================
