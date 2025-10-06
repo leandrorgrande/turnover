@@ -171,17 +171,7 @@ with st.expander("🧩 Análise de Qualidade e Estrutura dos Dados", expanded=Fa
     empresa, colab, perf, expected_cols = load_and_prepare(uploaded)
     df = colab.copy()
 
-    # --- Exibe resultados e estrutura ---
-    st.markdown("### Estrutura das Abas")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        show_sheet_preview("empresa", empresa, expected_cols["empresa"])
-    with c2:
-        show_sheet_preview("colaboradores", colab, expected_cols["colaboradores"])
-    with c3:
-        show_sheet_preview("performance", perf, expected_cols["performance"])
 
-    st.caption("✅ Dados processados com sucesso. Feche esta seção para visualizar os indicadores abaixo.")
 
 
 # =========================================================
