@@ -437,6 +437,7 @@ def view_overview(dfv):
 
     st.markdown("### ⏳ Tenure (Tempo Médio)")
     st.metric("Tenure Médio (m)", tenure_total)
+  
 
 # =========================================================
 # RENDER DA VIEW SELECIONADA (usa df_filt)
@@ -452,3 +453,41 @@ elif view == "risk":
     view_risk(df_final.copy())
 else:
     view_overview(df_final.copy())
+
+def view_headcount(dfv):
+    st.subheader("👥 Headcount — Estrutura e Evolução")
+
+    dept_c = col_like(dfv, "departamento")
+    if not dept_c:
+        st.info("Sem coluna 'departamento' para detalhar headcount.")
+        return
+
+    # Caso tenha competência, usa apenas os ativos
+    if "ativo" in dfv.columns:
+        base = dfv[dfv["ativo"] == True]
+    else:
+        base = dfv[dfv["data de desligamento"].isna()]
+
+    if base.empty:
+        st.warning("Nenhum colaborador ativo para o filtro selecionado.")
+        return
+
+    dist = base.groupby(dept_c)["matricula"].count().reset_index().rename(columns={"matricula": "Headcount"})
+    fig = px.bar(
+        dist,
+        x=dept_c,
+        y="Headcount",
+        color="Headcount",
+        color_continuous_scale="Tealgrn"
+    )
+    fig.update_layout(
+        template="plotly_dark",
+        title="Headcount por Departamento (Ativos no Período)",
+        xaxis_title="Departamento",
+        yaxis_title="Qtd"
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Adicional: % por departamento
+    dist["%"] = (dist["Headcount"] / dist["Headcount"].sum()) * 100
+    st.dataframe(dist.sort_values("Headcount", ascending=False).reset_index(drop=True), use_container_width=True)
