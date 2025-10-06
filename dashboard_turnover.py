@@ -636,68 +636,137 @@ def view_turnover(dfv):
 # =========================================================
 
 def view_risk(dfv):
-    st.subheader("🔮 Risco de Turnover (TRI) — Índice Composto")
+    st.subheader("🔮 Risco de Turnover (TRI) — Modelo Interativo e Explicativo")
 
+    # ============================================
+    # CONFIGURAÇÃO DE VARIÁVEIS BASE
+    # ============================================
     now = pd.Timestamp.now()
+    dfv["meses_desde_promocao"] = (
+        now - pd.to_datetime(dfv.get("ultima promoção"), errors="coerce")
+    ).dt.days / 30 if "ultima promoção" in dfv.columns else 0
+    dfv["meses_desde_merito"] = (
+        now - pd.to_datetime(dfv.get("ultimo mérito"), errors="coerce")
+    ).dt.days / 30 if "ultimo mérito" in dfv.columns else 0
 
-    # Considera apenas ativos (atuais ou na competência)
-    if "ativo" in dfv.columns:
-        base = dfv[dfv["ativo"] == True].copy()
+    # Tamanho da equipe (auto cálculo)
+    if "matricula do gestor" in dfv.columns:
+        gsize = dfv.groupby("matricula do gestor")["matricula"].count().rename("tamanho_equipe_calc")
+        dfv = dfv.merge(gsize, left_on="matricula do gestor", right_index=True, how="left")
+        dfv["tamanho_equipe"] = dfv["tamanho_equipe_calc"].fillna(0)
     else:
-        base = dfv[dfv["data de desligamento"].isna()].copy()
-
-    if base.empty:
-        st.warning("Nenhum colaborador ativo encontrado para calcular risco.")
-        return
-
-    base["meses_desde_promocao"] = (now - pd.to_datetime(base.get("ultima promoção"), errors="coerce")).dt.days / 30
-    base["meses_desde_merito"]  = (now - pd.to_datetime(base.get("ultimo mérito"), errors="coerce")).dt.days / 30
-
-    # Tamanho da equipe (por gestor)
-    if "matricula do gestor" in base.columns:
-        gsize = base.groupby("matricula do gestor")["matricula"].count().rename("tam_eq")
-        base = base.merge(gsize, left_on="matricula do gestor", right_index=True, how="left")
-    else:
-        base["tam_eq"] = 0
+        dfv["tamanho_equipe"] = 0
 
     # Performance
     perf_map = {"excepcional":10, "acima do esperado":7, "dentro do esperado":4, "abaixo do esperado":1}
-    base["score_perf_raw"] = base.get("avaliação", "dentro do esperado").astype(str).str.lower().map(perf_map).fillna(4)
+    dfv["score_perf_raw"] = dfv.get("avaliação", "").astype(str).str.lower().map(perf_map).fillna(4)
 
-    # Normalizações
-    base["score_perf_inv"]   = 1 - norm_0_1(base["score_perf_raw"])
-    base["score_tempo_promo"]= norm_0_1(base["meses_desde_promocao"])
-    base["score_tempo_casa"] = norm_0_1(base.get("tempo_casa", 0))
-    base["score_merito"]     = norm_0_1(base["meses_desde_merito"])
-    base["score_tam_eq"]     = norm_0_1(base["tam_eq"])
+    # Normalização
+    dfv["score_perf_inv"] = 1 - norm_0_1(dfv["score_perf_raw"])
+    dfv["score_tempo_promo"] = norm_0_1(dfv["meses_desde_promocao"])
+    dfv["score_tempo_casa"] = norm_0_1(dfv.get("tempo_casa", 0))
+    dfv["score_merito"] = norm_0_1(dfv["meses_desde_merito"])
+    dfv["score_tamanho_eq"] = norm_0_1(dfv["tamanho_equipe"])
 
-    # TRI
-    base["risco_turnover"] = (
-        0.30*base["score_perf_inv"] + 0.25*base["score_tempo_promo"] +
-        0.15*base["score_tempo_casa"] + 0.15*base["score_tam_eq"] +
-        0.15*base["score_merito"]
+    # ============================================
+    # CONTROLES INTERATIVOS DE PESO
+    # ============================================
+    st.markdown("### ⚙️ Ajuste dos Pesos das Variáveis")
+    with st.expander("Personalizar pesos do modelo (soma 100%)", expanded=False):
+        col1, col2, col3, col4, col5 = st.columns(5)
+        w_perf = col1.slider("Performance", 0, 100, 30)
+        w_promo = col2.slider("Tempo s/ Promoção", 0, 100, 25)
+        w_casa = col3.slider("Tempo de Casa", 0, 100, 15)
+        w_eq = col4.slider("Tam. Equipe", 0, 100, 15)
+        w_merito = col5.slider("Tempo s/ Mérito", 0, 100, 15)
+
+        total_w = w_perf + w_promo + w_casa + w_eq + w_merito
+        if total_w != 100:
+            st.warning(f"⚠️ A soma dos pesos é {total_w}%. Ajuste para totalizar 100%.")
+        weights = {k: v/100 for k,v in {
+            "perf": w_perf, "promo": w_promo, "casa": w_casa, "eq": w_eq, "merito": w_merito
+        }.items()}
+
+    # ============================================
+    # CÁLCULO DO RISCO (TRI)
+    # ============================================
+    dfv["risco_turnover"] = (
+        weights["perf"] * dfv["score_perf_inv"] +
+        weights["promo"] * dfv["score_tempo_promo"] +
+        weights["casa"] * dfv["score_tempo_casa"] +
+        weights["eq"] * dfv["score_tamanho_eq"] +
+        weights["merito"] * dfv["score_merito"]
     ) * 100
-    base["risco_turnover"] = base["risco_turnover"].clip(0, 100)
+    dfv["risco_turnover"] = dfv["risco_turnover"].clip(0, 100)
 
-    avg_risk = safe_mean(base["risco_turnover"])
-    pct_high = round((base["risco_turnover"] > 60).mean() * 100, 1)
+    avg_risk = safe_mean(dfv["risco_turnover"])
+    pct_high = round((dfv["risco_turnover"] > 60).mean() * 100, 1)
 
     c1, c2 = st.columns(2)
-    c1.metric("⚠️ Risco Médio (TRI)", avg_risk)
+    c1.metric("⚠️ Risco Médio (TRI)", f"{avg_risk}%")
     c2.metric("🚨 % Risco Alto", f"{pct_high}%")
 
-    # Risco médio por tempo sem promoção
-    bins = [0, 3, 6, 12, 24, np.inf]
-    labels = ["0-3m", "3-6m", "6-12m", "12-24m", "+24m"]
-    base["faixa_tempo_sem_promo"] = pd.cut(
-        pd.to_numeric(base["meses_desde_promocao"], errors="coerce").fillna(0),
-        bins=bins, labels=labels
-    )
+    st.divider()
 
-    risco_por_faixa = base.groupby("faixa_tempo_sem_promo")["risco_turnover"].mean().reset_index()
-    fig = px.line(risco_por_faixa, x="faixa_tempo_sem_promo", y="risco_turnover", markers=True, color_discrete_sequence=["#00FFFF"])
-    fig.update_layout(template="plotly_dark", title="📈 Risco Médio por Tempo sem Promoção", xaxis_title="Faixa", yaxis_title="Risco (0-100)")
-    st.plotly_chart(fig, use_container_width=True)
+    # ============================================
+    # GRÁFICOS DE DISTRIBUIÇÃO
+    # ============================================
+    bins = [0, 20, 40, 60, 80, 100]
+    labels = ["0–20", "20–40", "40–60", "60–80", "80–100"]
+    dfv["faixa_risco"] = pd.cut(dfv["risco_turnover"], bins=bins, labels=labels, include_lowest=True)
+    risco_dist = dfv["faixa_risco"].value_counts(normalize=True).sort_index() * 100
+
+    fig_dist = px.bar(
+        risco_dist, x=risco_dist.index, y=risco_dist.values,
+        text=risco_dist.round(1).astype(str) + "%",
+        color=risco_dist.values,
+        color_continuous_scale="Tealgrn",
+        title="📊 Distribuição do Risco de Turnover (%)"
+    )
+    fig_dist.update_traces(textposition="outside")
+    fig_dist.update_layout(template="plotly_dark", showlegend=False)
+    st.plotly_chart(fig_dist, use_container_width=True)
+
+    # Risco médio por tempo sem promoção
+    bins_promo = [0, 3, 6, 12, 24, np.inf]
+    labels_promo = ["0–3m", "3–6m", "6–12m", "12–24m", "+24m"]
+    dfv["faixa_tempo_sem_promo"] = pd.cut(dfv["meses_desde_promocao"], bins=bins_promo, labels=labels_promo)
+    risco_por_faixa = dfv.groupby("faixa_tempo_sem_promo")["risco_turnover"].mean().reset_index()
+
+    fig_risco = px.line(
+        risco_por_faixa, x="faixa_tempo_sem_promo", y="risco_turnover",
+        markers=True, color_discrete_sequence=["#00FFFF"],
+        title="📈 Risco Médio por Tempo sem Promoção"
+    )
+    fig_risco.update_layout(template="plotly_dark")
+    st.plotly_chart(fig_risco, use_container_width=True)
+
+    # ============================================
+    # ANÁLISE INDIVIDUAL / ANALÍTICO
+    # ============================================
+    st.markdown("### 🧾 Análise Individual de Risco")
+
+    def explain_risk(row):
+        motivos = []
+        if row["score_perf_inv"] > 0.6: motivos.append("baixa performance")
+        if row["score_tempo_promo"] > 0.6: motivos.append("muito tempo sem promoção")
+        if row["score_tamanho_eq"] > 0.6: motivos.append("gestor com equipe grande")
+        if row["score_merito"] > 0.6: motivos.append("sem mérito recente")
+        if row["score_tempo_casa"] < 0.2: motivos.append("pouco tempo de casa (fase inicial)")
+        if not motivos: return "Perfil estável"
+        return ", ".join(motivos).capitalize()
+
+    dfv["motivo_risco"] = dfv.apply(explain_risk, axis=1)
+
+    cols_show = [
+        c for c in ["nome", "departamento", "cargo", "avaliação", "risco_turnover", "motivo_risco"]
+        if c in dfv.columns
+    ]
+    st.dataframe(
+        dfv[cols_show].sort_values("risco_turnover", ascending=False).reset_index(drop=True),
+        use_container_width=True,
+        hide_index=True
+    )
 
 
 # =========================================================
