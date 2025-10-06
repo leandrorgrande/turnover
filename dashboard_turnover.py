@@ -86,7 +86,7 @@ def nav_links():
 
     if hasattr(st, "page_link"):
         with cols[0]:
-            st.page_link("pages/1_Visão_Geral.py", label="📍 Visão Geral")
+            st.page_link("pages/1_Visao_Geral.py", label="📍 Visão Geral")
             st.page_link("pages/2_Headcount.py", label="👥 Headcount")
         with cols[1]:
             st.page_link("pages/3_Turnover.py", label="🔄 Turnover")
