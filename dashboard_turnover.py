@@ -131,24 +131,7 @@ empresa = sheets.get("empresa", pd.DataFrame())
 colab = sheets.get("colaboradores", pd.DataFrame())
 perf = sheets.get("performance", pd.DataFrame())
 
-expected_cols = {
-    "empresa": ["nome empresa", "cnpj", "unidade", "cidade", "uf"],
-    "colaboradores": [
-        "matricula", "nome", "departamento", "cargo", "matricula do gestor",
-        "tipo_contrato", "genero", "data de admissão", "data de desligamento",
-        "motivo de desligamento", "ultima promoção", "ultimo mérito"
-    ],
-    "performance": ["matricula", "avaliação", "data de encerramento do ciclo"]
-}
 
-empresa = clean_and_warn(empresa, expected_cols["empresa"], "empresa")
-colab = clean_and_warn(colab, expected_cols["colaboradores"], "colaboradores")
-perf = clean_and_warn(perf, expected_cols["performance"], "performance")
-
-colab = to_datetime_safe(colab, DATE_COLS)
-colab = ensure_core_fields(colab)
-colab = merge_last_performance(colab, perf)
-df = colab.copy()
 
 # =========================================================
 # FILTROS LATERAIS (corrigido)
