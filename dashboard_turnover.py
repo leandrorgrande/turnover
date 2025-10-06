@@ -308,41 +308,57 @@ with st.sidebar:
         if mes_sel_desl != "Todos":
             df_filt = df_filt[df_filt["mes_desligamento"] == mes_sel_desl]
 
-    # ========================================================
-    # 🧭 FILTRO DE COMPETÊNCIA
-    # ========================================================
-    st.markdown("### 🧭 Competência de Referência (Turnover)")
-    anos_comp = sorted(set(
-        df_filt.get("ano_admissao", pd.Series()).dropna().astype(int).tolist() +
-        df_filt.get("ano_desligamento", pd.Series()).dropna().astype(int).tolist()
-    ))
-    meses_inv = {v: k for k, v in meses_map.items()}
+# ========================================================
+# 🧭 FILTRO DE COMPETÊNCIA (Turnover)
+# ========================================================
+st.markdown("### 🧭 Competência de Referência (Turnover)")
 
-    ano_comp_sel = st.selectbox("📆 Ano de Competência", anos_comp, index=len(anos_comp)-1 if anos_comp else 0)
-    mes_comp_sel = st.selectbox("🗓️ Mês de Competência", list(meses_map.values()), index=datetime.now().month-1)
+anos_comp = sorted(set(
+    df_filt.get("ano_admissao", pd.Series()).dropna().astype(int).tolist() +
+    df_filt.get("ano_desligamento", pd.Series()).dropna().astype(int).tolist()
+))
+meses_map = {
+    1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
+    5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
+    9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+}
+meses_inv = {v: k for k, v in meses_map.items()}
 
-    if ano_comp_sel and mes_comp_sel:
-        mes_num = meses_inv[mes_comp_sel]
-        inicio_comp = pd.Timestamp(ano_comp_sel, mes_num, 1)
-        fim_comp = (inicio_comp + pd.offsets.MonthEnd(1))
+ano_comp_sel = st.selectbox("📆 Ano de Competência", ["Todos"] + anos_comp)
+mes_comp_sel = st.selectbox("🗓️ Mês de Competência", ["Todos"] + list(meses_map.values()))
 
-        adm_dates = pd.to_datetime(df_filt[adm_col], errors="coerce") if adm_col else pd.Series([pd.NaT]*len(df_filt))
-        desl_dates = pd.to_datetime(df_filt[desl_col], errors="coerce") if desl_col else pd.Series([pd.NaT]*len(df_filt))
+# Cálculo da competência só se ambos forem diferentes de "Todos"
+if ano_comp_sel != "Todos" and mes_comp_sel != "Todos":
+    mes_num = meses_inv[mes_comp_sel]
+    inicio_comp = pd.Timestamp(int(ano_comp_sel), mes_num, 1)
+    fim_comp = inicio_comp + pd.offsets.MonthEnd(1)
 
-        df_filt["ativo_na_competencia"] = (
-            (adm_dates <= fim_comp) &
-            ((desl_dates.isna()) | (desl_dates >= inicio_comp))
-        )
-        df_filt["desligado_no_mes"] = (
-            (desl_dates >= inicio_comp) & (desl_dates <= fim_comp)
-        )
-        df_filt = df_filt[df_filt["ativo_na_competencia"] | df_filt["desligado_no_mes"]]
+    adm_dates = pd.to_datetime(df_filt[adm_col], errors="coerce") if adm_col else pd.Series([pd.NaT]*len(df_filt))
+    desl_dates = pd.to_datetime(df_filt[desl_col], errors="coerce") if desl_col else pd.Series([pd.NaT]*len(df_filt))
 
-        st.info(
-            f"📅 Competência: **{mes_comp_sel}/{ano_comp_sel}**  \n"
-            f"👥 Ativos: {df_filt['ativo_na_competencia'].sum()} | 🏁 Desligados: {df_filt['desligado_no_mes'].sum()}"
-        )
+    df_filt["ativo_na_competencia"] = (
+        (adm_dates <= fim_comp) &
+        ((desl_dates.isna()) | (desl_dates > fim_comp))
+    )
 
+    df_filt["desligado_no_mes"] = (
+        (desl_dates >= inicio_comp) & (desl_dates <= fim_comp)
+    )
+
+    # Mantém ativos ou desligados dentro do mês
+    df_filt = df_filt[df_filt["ativo_na_competencia"] | df_filt["desligado_no_mes"]]
+
+    st.info(
+        f"📅 Competência: **{mes_comp_sel}/{ano_comp_sel}**  \n"
+        f"👥 Ativos: {df_filt['ativo_na_competencia'].sum()} | 🏁 Desligados: {df_filt['desligado_no_mes'].sum()}"
+    )
+
+else:
+    # Se competência for “Todos”, marca todos como ativos para não afetar KPIs
+    df_filt["ativo_na_competencia"] = True
+    df_filt["desligado_no_mes"] = False
+
+  
     # ========================================================
     # 🔍 BUSCA POR NOME
     # ========================================================
