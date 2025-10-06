@@ -1,16 +1,14 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
 from datetime import datetime
-import openai
 
-# =========================
+# =========================================================
 # CONFIGURAÇÃO GERAL
-# =========================
-st.set_page_config(page_title="Dashboard de People Analytics • v6", layout="wide")
+# =========================================================
+st.set_page_config(page_title="Dashboard de Turnover • Main", layout="wide")
 
+# Estilo futurista leve
 st.markdown("""
 <style>
 html, body, [class*="css"] {
@@ -22,554 +20,172 @@ div[data-testid="stMetric"] {
   background: linear-gradient(135deg, #1a1f2b 0%, #151922 100%);
   border-radius: 18px;
   padding: 14px 16px;
-  box-shadow: 0 0 18px rgba(0, 255, 204, 0.12);
-  border: 1px solid rgba(0,255,204,0.12);
+  box-shadow: 0 0 18px rgba(0, 255, 204, 0.10);
+  border: 1px solid rgba(0,255,204,0.08);
 }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🚀 Dashboard de People Analytics — v6")
-st.caption("Headcount • Turnover • Risco de Turnover (TRI) • Insights com IA")
+st.title("🚀 Dashboard de People Analytics — Hub")
+st.caption("Este arquivo faz a **carga dos dados**, mostra uma **prévia** e oferece **atalhos** para as páginas.")
 
-# =========================
-# UPLOAD
-# =========================
-uploaded_file = st.file_uploader("📂 Carregue o arquivo Excel (.xlsx)", type=["xlsx"])
-if not uploaded_file:
-    st.info("⬆️ Envie o arquivo com abas: empresa, colaboradores e performance.")
+# =========================================================
+# HELPERS
+# =========================================================
+DATE_COLS = ["data de admissão", "data de desligamento", "ultima promoção", "ultimo mérito"]
+
+def to_datetime_safe(df: pd.DataFrame, cols):
+    for c in cols:
+        if c in df.columns:
+            df[c] = pd.to_datetime(df[c], errors="coerce")
+    return df
+
+def ensure_core_fields(colab: pd.DataFrame) -> pd.DataFrame:
+    # ativo
+    if "data de desligamento" in colab.columns:
+        colab["ativo"] = colab["data de desligamento"].isna()
+    else:
+        colab["ativo"] = True
+
+    # tempo de casa (meses)
+    now = pd.Timestamp.now()
+    if "data de admissão" in colab.columns:
+        colab["tempo_casa"] = (now - colab["data de admissão"]).dt.days / 30
+    else:
+        colab["tempo_casa"] = np.nan
+
+    return colab
+
+def merge_last_performance(colab: pd.DataFrame, perf: pd.DataFrame) -> pd.DataFrame:
+    if perf is None or perf.empty:
+        return colab
+    perf_df = perf.copy()
+    if "data de encerramento do ciclo" in perf_df.columns:
+        perf_df["data de encerramento do ciclo"] = pd.to_datetime(perf_df["data de encerramento do ciclo"], errors="coerce")
+        last = perf_df.sort_values(["matricula", "data de encerramento do ciclo"]).groupby("matricula", as_index=False).tail(1)
+    else:
+        last = perf_df.drop_duplicates(subset=["matricula"], keep="last")
+    if "avaliação" in last.columns:
+        colab = colab.merge(last[["matricula", "avaliação"]], on="matricula", how="left")
+    return colab
+
+def show_sheet_preview(name: str, df: pd.DataFrame, expected_cols: list[str] | None = None):
+    st.markdown(f"#### 📄 Aba `{name}`")
+    if df is None:
+        st.warning("Não encontrada.")
+        return
+    st.write(f"Linhas: **{len(df)}** • Colunas: **{len(df.columns)}**")
+    if expected_cols:
+        missing = [c for c in expected_cols if c not in df.columns]
+        if missing:
+            st.warning(f"Colunas esperadas ausentes: {', '.join(missing)}")
+    st.dataframe(df.head(5), use_container_width=True)
+
+def nav_links():
+    st.markdown("### 🧭 Acessar páginas")
+    # Preferir page_link (Streamlit >= 1.30); fallback para botões + switch_page
+    has_page_link = hasattr(st, "page_link")
+    cols = st.columns(3)
+
+    if has_page_link:
+        with cols[0]:
+            st.page_link("pages/1_Visão_Geral.py", label="📍 Visão Geral")
+            st.page_link("pages/2_Headcount.py", label="👥 Headcount")
+        with cols[1]:
+            st.page_link("pages/3_Turnover.py", label="🔄 Turnover")
+            st.page_link("pages/4_Risco_TRI.py", label="🔮 Risco (TRI)")
+        with cols[2]:
+            st.info("As demais funcionalidades de IA serão acopladas em cada página.")
+    else:
+        def go(path):
+            try:
+                st.switch_page(path)
+            except Exception:
+                st.info(f"Abra pelo menu lateral: **{path}**")
+        with cols[0]:
+            if st.button("📍 Visão Geral"):
+                go("pages/1_Visão_Geral.py")
+            if st.button("👥 Headcount"):
+                go("pages/2_Headcount.py")
+        with cols[1]:
+            if st.button("🔄 Turnover"):
+                go("pages/3_Turnover.py")
+            if st.button("🔮 Risco (TRI)"):
+                go("pages/4_Risco_TRI.py")
+        with cols[2]:
+            st.info("As demais funcionalidades de IA serão acopladas em cada página.")
+
+# =========================================================
+# UPLOAD & LEITURA
+# =========================================================
+uploaded = st.file_uploader("📂 Carregue o Excel (.xlsx) com as abas **empresa**, **colaboradores** e **performance**", type=["xlsx"])
+
+with st.expander("📘 Ver modelo esperado das abas (exemplo de colunas)"):
+    st.markdown("""
+- **empresa**: `nome empresa`, `cnpj`, `unidade`, `cidade`, `uf`  
+- **colaboradores**: `matricula`, `nome`, `departamento`, `cargo`, `matricula do gestor`, `tipo_contrato`, `genero`, `data de admissão`, `data de desligamento`, `motivo de desligamento`, `ultima promoção`, `ultimo mérito`  
+- **performance**: `matricula`, `avaliação`, `data de encerramento do ciclo`
+""")
+
+if not uploaded:
+    st.info("⬆️ Envie o arquivo para iniciar.")
     st.stop()
 
-empresa = pd.read_excel(uploaded_file, sheet_name="empresa")
-colab = pd.read_excel(uploaded_file, sheet_name="colaboradores")
-perf = pd.read_excel(uploaded_file, sheet_name="performance")
-
-# =========================
-# PREPARAÇÃO DE DADOS
-# =========================
-for c in ["data de admissão", "data de desligamento", "ultima promoção", "ultimo mérito"]:
-    if c in colab.columns:
-        colab[c] = pd.to_datetime(colab[c], errors="coerce")
-
-colab["ativo"] = colab["data de desligamento"].isna()
-colab["ano_desligamento"] = colab["data de desligamento"].dt.year
-colab["motivo_voluntario"] = colab["motivo de desligamento"].fillna("").str.contains("Pedido", case=False)
-
-# performance - última avaliação
-if "data de encerramento do ciclo" in perf.columns:
-    perf["data de encerramento do ciclo"] = pd.to_datetime(perf["data de encerramento do ciclo"], errors="coerce")
-    perf_last = perf.sort_values(["matricula", "data de encerramento do ciclo"]).groupby("matricula", as_index=False).tail(1)
-else:
-    perf_last = perf.drop_duplicates(subset=["matricula"], keep="last")
-colab = colab.merge(perf_last[["matricula", "avaliação"]], on="matricula", how="left")
-
-# criar tempo de casa
-now = pd.Timestamp.now()
-colab["tempo_casa"] = (now - colab["data de admissão"]).dt.days / 30
-
-# =========================
-# FILTROS
-# =========================
-st.sidebar.header("🔎 Filtros")
-empresa_sel = st.sidebar.selectbox("Empresa", empresa["nome empresa"].tolist())
-dept_opts = ["Todos"] + sorted(colab["departamento"].dropna().unique().tolist())
-dept_sel = st.sidebar.selectbox("Departamento", dept_opts)
-
-df = colab.copy()
-if dept_sel != "Todos":
-    df = df[df["departamento"] == dept_sel]
-
-# =========================
-# ABAS (inclui Visão Geral)
-# =========================
-tab_overview, tab_headcount, tab_turnover, tab_risco, tab_ia = st.tabs([
-    "📍 Visão Geral", "👥 Headcount", "🔄 Turnover", "🔮 Risco (TRI)", "🤖 Insights com IA"
-])
-
-# =========================
-# 0️⃣ VISÃO GERAL (EXECUTIVE SUMMARY - SAFE VERSION)
-# =========================
-with tab_overview:
-    st.subheader("📍 Visão Geral — KPIs Consolidados de People Analytics")
-    st.caption("Resumo executivo com os principais indicadores de Headcount, Turnover, Tenure e Risco de Saída (TRI)")
-
-    # Função auxiliar para acessar colunas com segurança
-    def col(df, name):
-        cols = [c for c in df.columns if c.lower().strip() == name.lower().strip()]
-        return cols[0] if cols else None
-
-    # ======================
-    # HEADCOUNT
-    # ======================
-    ativos = df[df["ativo"]]
-
-    total_ativos = len(ativos)
-    total_departamentos = ativos[col(ativos, "departamento")].nunique() if col(ativos, "departamento") else 0
-
-    # tipo de contrato
-    tipo_col = col(ativos, "tipo_contrato")
-    if tipo_col:
-        total_clt = (ativos[tipo_col].str.upper() == "CLT").sum()
-        total_pj = (ativos[tipo_col].str.upper() == "PJ").sum()
-        pct_clt = round((total_clt / total_ativos) * 100, 1) if total_ativos else 0
-        pct_pj = round((total_pj / total_ativos) * 100, 1) if total_ativos else 0
-    else:
-        pct_clt = pct_pj = "—"
-
-    # gênero
-    gen_col = col(ativos, "genero")
-    if gen_col:
-        genero_counts = ativos[gen_col].value_counts(normalize=True) * 100
-        pct_fem = round(genero_counts.get("Feminino", 0), 1)
-    else:
-        pct_fem = "—"
-
-    # liderança
-    cargo_col = col(ativos, "cargo")
-    if cargo_col:
-        cargos_lideranca = ativos[cargo_col].astype(str).str.lower().str.contains("coordenador|gerente|diretor", na=False)
-        pct_lideranca = round((cargos_lideranca.sum() / total_ativos) * 100, 1)
-    else:
-        pct_lideranca = "—"
-
-    # ======================
-    # TURNOVER
-    # ======================
-    adm_col = col(df, "data de admissão")
-    desl_col = col(df, "data de desligamento")
-    motivo_col = col(df, "motivo de desligamento")
-
-    if adm_col and desl_col:
-        data_min = df[adm_col].min()
-        data_max = df[desl_col].max() if df[desl_col].notna().any() else datetime.now()
-        meses = pd.date_range(data_min, data_max, freq="MS")
-
-        turnover_mensal = []
-        for mes in meses:
-            ativos_mes = df[(df[adm_col] <= mes) & ((df[desl_col].isna()) | (df[desl_col] > mes))]
-            desligados_mes = df[(df[desl_col].notna()) & (df[desl_col].dt.to_period("M") == mes.to_period("M"))]
-            ativos_qtd = len(ativos_mes)
-            deslig_total = len(desligados_mes)
-            if motivo_col:
-                deslig_vol = desligados_mes[motivo_col].astype(str).str.contains("Pedido", case=False, na=False).sum()
-            else:
-                deslig_vol = 0
-            deslig_invol = deslig_total - deslig_vol
-            turnover_total = (deslig_total / ativos_qtd) * 100 if ativos_qtd > 0 else 0
-            turnover_vol = (deslig_vol / ativos_qtd) * 100 if ativos_qtd > 0 else 0
-            turnover_invol = (deslig_invol / ativos_qtd) * 100 if ativos_qtd > 0 else 0
-            turnover_mensal.append([turnover_total, turnover_vol, turnover_invol])
-
-        turnover_df = pd.DataFrame(turnover_mensal, columns=["total", "vol", "invol"])
-        turnover_total_medio = round(turnover_df["total"].mean(), 1)
-        turnover_vol_medio = round(turnover_df["vol"].mean(), 1)
-        turnover_invol_medio = round(turnover_df["invol"].mean(), 1)
-    else:
-        turnover_total_medio = turnover_vol_medio = turnover_invol_medio = "—"
-
-    # ======================
-    # TENURE
-    # ======================
-    try:
-        df_desligados = df[~df["ativo"]].copy()
-        if desl_col and adm_col:
-            df_desligados["tenure_meses"] = (df_desligados[desl_col] - df_desligados[adm_col]).dt.days / 30
-            tenure_total = round(df_desligados["tenure_meses"].mean(), 1)
-            tenure_vol = round(df_desligados.loc[df_desligados[motivo_col].astype(str).str.contains("Pedido", case=False, na=False), "tenure_meses"].mean(), 1) if motivo_col else "—"
-            tenure_invol = round(df_desligados.loc[~df_desligados[motivo_col].astype(str).str.contains("Pedido", case=False, na=False), "tenure_meses"].mean(), 1) if motivo_col else "—"
-        else:
-            tenure_total = tenure_vol = tenure_invol = "—"
-        tenure_ativos = round(df.loc[df["ativo"], "tempo_casa"].mean(), 1) if "tempo_casa" in df.columns else "—"
-    except Exception:
-        tenure_total = tenure_vol = tenure_invol = tenure_ativos = "—"
-
-    # ======================
-    # RISCO (TRI)
-    # ======================
-    try:
-        now = pd.Timestamp.now()
-
-        # datas seguras
-        promo_col = col(df, "ultima promoção")
-        merito_col = col(df, "ultimo mérito")
-        df["meses_desde_promocao"] = (now - pd.to_datetime(df[promo_col], errors="coerce")).dt.days / 30 if promo_col else 0
-        df["meses_desde_merito"] = (now - pd.to_datetime(df[merito_col], errors="coerce")).dt.days / 30 if merito_col else 0
-
-        # tamanho de equipe seguro
-        gestor_col = col(df, "matricula do gestor")
-        if gestor_col:
-            gestor_size = df.groupby(gestor_col)["matricula"].count().rename("tamanho_equipe")
-            df = df.merge(gestor_size, left_on=gestor_col, right_index=True, how="left")
-        if "tamanho_equipe" not in df.columns:
-            df["tamanho_equipe"] = 0
-
-        # performance
-        perf_col = col(df, "avaliação")
-        perf_map = {"excepcional": 10, "acima do esperado": 7, "dentro do esperado": 4, "abaixo do esperado": 1}
-        df["score_perf_raw"] = df[perf_col].str.lower().map(perf_map).fillna(4) if perf_col else 4
-
-        def norm_0_1(s):
-            s = s.astype(float)
-            maxv = s.max(skipna=True)
-            return s / maxv if pd.notna(maxv) and maxv not in [0, np.inf] else s.fillna(0).mul(0)
-
-        df["score_perf_inv"] = 1 - norm_0_1(df["score_perf_raw"])
-        df["score_tempo_promo"] = norm_0_1(df["meses_desde_promocao"])
-        df["score_tempo_casa"] = norm_0_1(df["tempo_casa"]) if "tempo_casa" in df.columns else 0
-        df["score_merito"] = norm_0_1(df["meses_desde_merito"])
-        df["score_tamanho_eq"] = norm_0_1(df["tamanho_equipe"])
-
-        df["risco_turnover"] = (
-            0.30 * df["score_perf_inv"] +
-            0.25 * df["score_tempo_promo"] +
-            0.15 * df["score_tempo_casa"] +
-            0.15 * df["score_tamanho_eq"] +
-            0.15 * df["score_merito"]
-        ) * 100
-
-        risco_medio = round(df["risco_turnover"].mean(), 1)
-        risco_alto = round((df["risco_turnover"] > 60).mean() * 100, 1)
-
-    except Exception as e:
-        st.warning(f"⚠️ Não foi possível calcular o risco (TRI): {e}")
-        if "tamanho_equipe" not in df.columns:
-            df["tamanho_equipe"] = 0
-        risco_medio = risco_alto = "—"
-
-    # ======================
-    # EXIBIÇÃO DOS KPIs
-    # ======================
-    st.markdown("### 👥 Headcount e Estrutura")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Ativos", total_ativos)
-    c2.metric("% CLT", f"{pct_clt}")
-    c3.metric("% Feminino", f"{pct_fem}")
-    c4.metric("% Liderança", f"{pct_lideranca}")
-
-    st.markdown("### 🔄 Turnover")
-    c5, c6, c7 = st.columns(3)
-    c5.metric("Total (%)", f"{turnover_total_medio}")
-    c6.metric("Voluntário (%)", f"{turnover_vol_medio}")
-    c7.metric("Involuntário (%)", f"{turnover_invol_medio}")
-
-    st.markdown("### ⏳ Tenure (Tempo Médio)")
-    c8, c9, c10, c11 = st.columns(4)
-    c8.metric("Total (m)", f"{tenure_total}")
-    c9.metric("Voluntário (m)", f"{tenure_vol}")
-    c10.metric("Involuntário (m)", f"{tenure_invol}")
-    c11.metric("Ativos (m)", f"{tenure_ativos}")
-
-    st.markdown("### 🔮 Risco de Saída (TRI)")
-    c12, c13 = st.columns(2)
-    c12.metric("Risco Médio", f"{risco_medio}")
-    c13.metric("% em Risco Alto", f"{risco_alto}%")
-
-    st.divider()
-    st.markdown(f"""
-    📊 *Resumo executivo*: O headcount atual é de **{total_ativos}** colaboradores, com turnover médio de **{turnover_total_medio}%**
-    ({turnover_vol_medio}% voluntário e {turnover_invol_medio}% involuntário).  
-    O tempo médio até o desligamento é de **{tenure_total} meses**, e o risco médio de saída (TRI) está em **{risco_medio}**, 
-    com **{risco_alto}%** dos colaboradores em alto risco.*
-    """)
-
-# =========================
-# 1️⃣ HEADCOUNT
-# =========================
-with tab_headcount:
-    st.subheader("📊 Headcount e Estrutura Organizacional")
-    ativos = df[df["ativo"]]
-
-    total_ativos = len(ativos)
-    total_departamentos = ativos["departamento"].nunique()
-
-    if "tipo_contrato" in ativos.columns:
-        total_clt = (ativos["tipo_contrato"].str.upper() == "CLT").sum()
-        total_pj = (ativos["tipo_contrato"].str.upper() == "PJ").sum()
-    else:
-        total_clt = total_pj = 0
-
-    pct_clt = round((total_clt / total_ativos) * 100, 1) if total_ativos else 0
-    pct_pj = round((total_pj / total_ativos) * 100, 1) if total_ativos else 0
-
-    if "genero" in ativos.columns:
-        genero_counts = ativos["genero"].value_counts(normalize=True) * 100
-        pct_fem = round(genero_counts.get("Feminino", 0), 1)
-    else:
-        pct_fem = 0
-
-    if "cargo" in ativos.columns:
-        cargos_lideranca = ativos["cargo"].str.lower().str.contains("coordenador|gerente|diretor", na=False)
-        pct_lideranca = round((cargos_lideranca.sum() / total_ativos) * 100, 1)
-    else:
-        pct_lideranca = 0
-
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("👥 Ativos Totais", total_ativos)
-    col2.metric("🏢 Departamentos", total_departamentos)
-    col3.metric("📃 CLT (%)", f"{pct_clt}%")
-    col4.metric("🚺 Feminino (%)", f"{pct_fem}%")
-    col5.metric("🧭 Liderança (%)", f"{pct_lideranca}%")
-
-    st.divider()
-    headcount_area = ativos.groupby("departamento")["matricula"].count().reset_index()
-    fig_area = px.bar(headcount_area, x="departamento", y="matricula", color="matricula", color_continuous_scale="Tealgrn")
-    fig_area.update_layout(template="plotly_dark", title="Headcount por Departamento")
-    st.plotly_chart(fig_area, use_container_width=True)
-
-# =========================
-# 2️⃣ TURNOVER (ANÁLISE COMPLETA)
-# =========================
-with tab_turnover:
-    st.subheader("🔄 Turnover e Tenure Médio — Análise Detalhada")
-
-    # --- preparar base
-    df["mes_ano_admissao"] = df["data de admissão"].dt.to_period("M").astype(str)
-    df["mes_ano_desligamento"] = df["data de desligamento"].dt.to_period("M").astype(str)
-
-    # --- períodos (mês a mês)
-    data_min = df["data de admissão"].min()
-    data_max = df["data de desligamento"].max() if df["data de desligamento"].notna().any() else datetime.now()
-    meses = pd.date_range(data_min, data_max, freq="MS")
-
-    turnover_mensal = []
-    for mes in meses:
-        ativos_mes = df[(df["data de admissão"] <= mes) & ((df["data de desligamento"].isna()) | (df["data de desligamento"] > mes))]
-        desligados_mes = df[(df["data de desligamento"].notna()) & (df["data de desligamento"].dt.to_period("M") == mes.to_period("M"))]
-
-        ativos = len(ativos_mes)
-        deslig_total = len(desligados_mes)
-        deslig_vol = desligados_mes["motivo_voluntario"].sum()
-        deslig_invol = deslig_total - deslig_vol
-
-        turnover_total = (deslig_total / ativos) * 100 if ativos > 0 else 0
-        turnover_vol = (deslig_vol / ativos) * 100 if ativos > 0 else 0
-        turnover_invol = (deslig_invol / ativos) * 100 if ativos > 0 else 0
-
-        turnover_mensal.append({
-            "Mês": mes.strftime("%Y-%m"),
-            "Ativos": ativos,
-            "Desligados": deslig_total,
-            "Voluntários": deslig_vol,
-            "Involuntários": deslig_invol,
-            "Turnover Total (%)": turnover_total,
-            "Turnover Voluntário (%)": turnover_vol,
-            "Turnover Involuntário (%)": turnover_invol
-        })
-
-    turnover_df = pd.DataFrame(turnover_mensal)
-
-    # --- KPIs principais
-    turnover_total_medio = round(turnover_df["Turnover Total (%)"].mean(), 1)
-    turnover_vol_medio = round(turnover_df["Turnover Voluntário (%)"].mean(), 1)
-    turnover_invol_medio = round(turnover_df["Turnover Involuntário (%)"].mean(), 1)
-    media_ativos = int(turnover_df["Ativos"].mean())
-    media_deslig = int(turnover_df["Desligados"].mean())
-
-    df_desligados = df[~df["ativo"]].copy()
-    df_desligados["tenure_meses"] = (df_desligados["data de desligamento"] - df_desligados["data de admissão"]).dt.days / 30
-    tenure_total = round(df_desligados["tenure_meses"].mean(), 1)
-    tenure_vol = round(df_desligados.loc[df_desligados["motivo_voluntario"], "tenure_meses"].mean(), 1)
-    tenure_invol = round(df_desligados.loc[~df_desligados["motivo_voluntario"], "tenure_meses"].mean(), 1)
-    tenure_ativos = round(df.loc[df["ativo"], "tempo_casa"].mean(), 1)
-
-    colA, colB, colC, colD, colE, colF, colG = st.columns(7)
-    colA.metric("👥 Ativos Médios", media_ativos)
-    colB.metric("📉 Desligamentos Médios", media_deslig)
-    colC.metric("📊 Turnover Médio Total (%)", turnover_total_medio)
-    colD.metric("🤝 Voluntário (%)", turnover_vol_medio)
-    colE.metric("📋 Involuntário (%)", turnover_invol_medio)
-    colF.metric("⏱️ Tenure Voluntário (m)", tenure_vol)
-    colG.metric("🏢 Tenure Involuntário (m)", tenure_invol)
-
-    st.divider()
-
-    # --- gráfico 1: evolução do turnover total
-    fig_turn_total = go.Figure()
-    fig_turn_total.add_trace(go.Scatter(
-        x=turnover_df["Mês"], y=turnover_df["Turnover Total (%)"],
-        mode="lines+markers", name="Total", line=dict(color="#00FFFF", width=3)
-    ))
-    fig_turn_total.add_trace(go.Scatter(
-        x=turnover_df["Mês"], y=turnover_df["Turnover Voluntário (%)"],
-        mode="lines+markers", name="Voluntário", line=dict(color="#FFD700", dash="dash")
-    ))
-    fig_turn_total.add_trace(go.Scatter(
-        x=turnover_df["Mês"], y=turnover_df["Turnover Involuntário (%)"],
-        mode="lines+markers", name="Involuntário", line=dict(color="#FF4500", dash="dot")
-    ))
-    fig_turn_total.update_layout(
-        template="plotly_dark",
-        title="📆 Evolução Mensal do Turnover (%)",
-        xaxis_title="Mês",
-        yaxis_title="Turnover (%)",
-        hovermode="x unified"
-    )
-    st.plotly_chart(fig_turn_total, use_container_width=True)
-
-    # --- gráfico 2: headcount vs desligados
-    fig_hc = go.Figure()
-    fig_hc.add_trace(go.Bar(
-        x=turnover_df["Mês"], y=turnover_df["Ativos"], name="Ativos",
-        marker_color="rgba(0,255,204,0.4)"
-    ))
-    fig_hc.add_trace(go.Bar(
-        x=turnover_df["Mês"], y=turnover_df["Desligados"], name="Desligados",
-        marker_color="rgba(255,80,80,0.7)"
-    ))
-    fig_hc.update_layout(
-        barmode="overlay",
-        template="plotly_dark",
-        title="📊 Ativos x Desligados por Mês",
-        xaxis_title="Mês",
-        yaxis_title="Quantidade de Colaboradores",
-        hovermode="x unified"
-    )
-    st.plotly_chart(fig_hc, use_container_width=True)
-
-    # --- gráfico 3: tenure médio por tipo de desligamento
-    tenure_data = pd.DataFrame({
-        "Tipo": ["Voluntário", "Involuntário"],
-        "Tenure Médio (m)": [tenure_vol, tenure_invol]
-    })
-    fig_tenure = px.bar(
-        tenure_data, x="Tipo", y="Tenure Médio (m)",
-        color="Tipo", color_discrete_sequence=["#FFD700", "#FF4500"]
-    )
-    fig_tenure.update_layout(
-        template="plotly_dark",
-        title="⏳ Tempo Médio de Permanência até o Desligamento",
-        yaxis_title="Meses"
-    )
-    st.plotly_chart(fig_tenure, use_container_width=True)
-
-# =========================
-# 3️⃣ RISCO (TRI)
-# =========================
-with tab_risco:
-    st.subheader("🔮 Risco de Turnover (TRI)")
-
-    now = pd.Timestamp.now()
-
-    # --- conversões seguras
-    if "ultima promoção" in df.columns:
-        df["meses_desde_promocao"] = (now - pd.to_datetime(df["ultima promoção"], errors="coerce")).dt.days / 30
-    else:
-        df["meses_desde_promocao"] = 0
-
-    if "ultimo mérito" in df.columns:
-        df["meses_desde_merito"] = (now - pd.to_datetime(df["ultimo mérito"], errors="coerce")).dt.days / 30
-    else:
-        df["meses_desde_merito"] = 0
-
-    # --- garantir existência da coluna tamanho_equipe
-    if "tamanho_equipe" not in df.columns:
-        df["tamanho_equipe"] = 0
-
-    # --- calcular tamanho da equipe se a coluna de gestor existir
-    if "matricula do gestor" in df.columns:
-        try:
-            gestor_size = df.groupby("matricula do gestor")["matricula"].count().rename("tamanho_calc")
-            df = df.merge(gestor_size, left_on="matricula do gestor", right_index=True, how="left")
-            df["tamanho_equipe"] = df["tamanho_calc"].fillna(df["tamanho_equipe"])
-            df.drop(columns=["tamanho_calc"], inplace=True, errors="ignore")
-        except Exception:
-            st.warning("⚠️ Não foi possível calcular o tamanho das equipes, usando zeros como padrão.")
-    else:
-        st.warning("⚠️ Coluna 'matricula do gestor' ausente — tamanho de equipe definido como 0.")
-
-    # --- performance
-    perf_map = {"excepcional": 10, "acima do esperado": 7, "dentro do esperado": 4, "abaixo do esperado": 1}
-    if "avaliação" in df.columns:
-        df["score_perf_raw"] = df["avaliação"].astype(str).str.lower().map(perf_map).fillna(4)
-    else:
-        df["score_perf_raw"] = 4
-
-    # --- função normalizadora
-    def norm_0_1(s):
-        s = s.astype(float)
-        if s.empty or s.max(skipna=True) in [0, np.inf, np.nan]:
-            return s.fillna(0)
-        return (s - s.min(skipna=True)) / (s.max(skipna=True) - s.min(skipna=True))
-
-    # --- cálculos de scores
-    df["score_perf_inv"] = 1 - norm_0_1(df["score_perf_raw"])
-    df["score_tempo_promo"] = norm_0_1(df["meses_desde_promocao"].fillna(0))
-    df["score_tempo_casa"] = norm_0_1(df["tempo_casa"].fillna(0)) if "tempo_casa" in df.columns else 0
-    df["score_merito"] = norm_0_1(df["meses_desde_merito"].fillna(0))
-    df["score_tamanho_eq"] = norm_0_1(df["tamanho_equipe"].fillna(0))
-
-    # --- cálculo do índice composto TRI
-    df["risco_turnover"] = (
-        0.30 * df["score_perf_inv"] +
-        0.25 * df["score_tempo_promo"] +
-        0.15 * df["score_tempo_casa"] +
-        0.15 * df["score_tamanho_eq"] +
-        0.15 * df["score_merito"]
-    ) * 100
-
-    df["risco_turnover"] = df["risco_turnover"].clip(0, 100)
-
-    # --- métricas principais
-    avg_risk = round(df["risco_turnover"].mean(), 1)
-    pct_high = round((df["risco_turnover"] > 60).mean() * 100, 1)
-
-    colR1, colR2 = st.columns(2)
-    colR1.metric("⚠️ Risco Médio (TRI)", avg_risk)
-    colR2.metric("🚨 % Risco Alto", f"{pct_high}%")
-
-    # --- risco por tempo sem promoção
-    bins = [0, 3, 6, 12, 24, np.inf]
-    labels = ["0-3m", "3-6m", "6-12m", "12-24m", "+24m"]
-    df["faixa_tempo_sem_promo"] = pd.cut(df["meses_desde_promocao"].fillna(0), bins=bins, labels=labels)
-
-    risco_por_faixa = (
-        df.groupby("faixa_tempo_sem_promo")["risco_turnover"]
-        .mean()
-        .reset_index()
-        .rename(columns={"risco_turnover": "Risco Médio"})
-    )
-
-    fig_risco = px.line(
-        risco_por_faixa,
-        x="faixa_tempo_sem_promo",
-        y="Risco Médio",
-        markers=True,
-        color_discrete_sequence=["#00FFFF"]
-    )
-    fig_risco.update_layout(
-        template="plotly_dark",
-        title="📈 Risco Médio por Tempo sem Promoção",
-        xaxis_title="Faixa de Tempo sem Promoção",
-        yaxis_title="Risco Médio (0-100)"
-    )
-    st.plotly_chart(fig_risco, use_container_width=True)
-
-# =========================
-# 4️⃣ INSIGHTS COM IA
-# =========================
-with tab_ia:
-    st.subheader("🤖 Insights Analíticos com GPT-4")
-    st.markdown("Gere uma análise qualitativa dos resultados atuais.")
-    if st.button("Gerar Análise com IA"):
-        with st.spinner("Gerando insights..."):
-            try:
-                openai.api_key = st.secrets["OPENAI_API_KEY"]
-                prompt = f"""
-                Gere uma análise de People Analytics considerando:
-                - Headcount: {len(df[df['ativo']])}
-                - Turnover médio e tenure: {round(df['tempo_casa'].mean(),1)}m
-                - Risco médio TRI: {avg_risk}, {pct_high}% alto.
-                Crie 3 a 4 frases com contexto, causas e recomendações práticas.
-                """
-                resp = openai.chat.completions.create(
-                    model="gpt-4-turbo",
-                    messages=[{"role": "system", "content": "Você é um analista de People Analytics."},
-                              {"role": "user", "content": prompt}],
-                    temperature=0.6
-                )
-                st.success(resp.choices[0].message.content)
-            except Exception as e:
-                st.error(f"Erro: {e}")
-    else:
-        st.info("Clique para gerar análise com IA.")
-
-st.caption("• Versão 6.0 • Dashboard modular com abas e IA sob demanda.")
+try:
+    empresa = pd.read_excel(uploaded, sheet_name="empresa")
+except Exception:
+    empresa = pd.DataFrame()
+
+try:
+    colab = pd.read_excel(uploaded, sheet_name="colaboradores")
+except Exception:
+    colab = pd.DataFrame()
+
+try:
+    perf = pd.read_excel(uploaded, sheet_name="performance")
+except Exception:
+    perf = pd.DataFrame()
+
+# Conversões de data e campos essenciais
+colab = to_datetime_safe(colab, DATE_COLS)
+colab = ensure_core_fields(colab)
+colab = merge_last_performance(colab, perf)
+
+# Guardar em sessão (para uso nas páginas)
+st.session_state["empresa"] = empresa
+st.session_state["colab"] = colab
+st.session_state["perf"] = perf
+st.session_state["df"] = colab.copy()  # df padrão de trabalho nas páginas
+
+st.success("✅ Dados carregados e disponíveis para as páginas.")
+
+# =========================================================
+# PRÉVIA / EXTRAÇÃO DOS DADOS
+# =========================================================
+st.markdown("### 🔎 Prévia das abas carregadas")
+cols_prev = st.columns(3)
+with cols_prev[0]:
+    show_sheet_preview("empresa", empresa, expected_cols=["nome empresa"])
+with cols_prev[1]:
+    show_sheet_preview("colaboradores", colab, expected_cols=[
+        "matricula", "departamento", "cargo", "matricula do gestor", "data de admissão"
+    ])
+with cols_prev[2]:
+    show_sheet_preview("performance", perf, expected_cols=["matricula", "avaliação"])
+
+# Sinalizadores úteis
+with st.expander("🧪 Validações rápidas"):
+    checks = []
+    checks.append(("Aba empresa", not empresa.empty))
+    checks.append(("Aba colaboradores", not colab.empty))
+    checks.append(("Campo ativo criado", "ativo" in colab.columns))
+    checks.append(("Tempo de casa criado", "tempo_casa" in colab.columns))
+    checks.append(("Aba performance (opcional)", not perf.empty))
+    ok = all(flag for _, flag in checks)
+    for label, flag in checks:
+        st.write(("✅ " if flag else "⚠️ ") + label)
+    if not ok:
+        st.warning("Alguns itens estão faltando — o dashboard ainda funciona, mas alguns KPIs podem ficar indisponíveis.")
+
+st.markdown("---")
+nav_links()
