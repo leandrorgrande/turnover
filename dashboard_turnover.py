@@ -11,6 +11,7 @@ from utils import (
     validate_calculations,
     col_like,
     calculate_turnover,
+    calculate_turnover_by_period,
     calculate_turnover_history,
     calculate_tenure,
     calculate_headcount,
@@ -202,6 +203,10 @@ with st.sidebar:
     ano_sel = st.selectbox("📆 Ano de Competência", ["Todos"] + anos)
     mes_sel = st.selectbox("🗓️ Mês de Competência", ["Todos"] + list(meses_map.values()))
 
+    # Armazenar filtros selecionados para usar nas views
+    ano_filtro = int(ano_sel) if ano_sel != "Todos" else None
+    mes_filtro = meses_inv[mes_sel] if mes_sel != "Todos" else None
+    
     # Cria df_final e status ativo/desligado com base no filtro
     df_final = df_filt.copy()
     if ano_sel != "Todos" and mes_sel != "Todos":
@@ -219,10 +224,16 @@ with st.sidebar:
         deslig = df_final["desligado_no_mes"].sum()
 
         st.info(f"📅 {mes_sel}/{ano_sel} — 👥 Ativos: {ativos} | 🏁 Desligados: {deslig}")
+    elif ano_sel != "Todos":
+        # Só ano selecionado
+        st.info(f"📅 Ano {ano_sel} — Média mensal do ano")
+    elif mes_sel != "Todos":
+        # Só mês selecionado
+        st.info(f"📅 Mês: {mes_sel} — Média mensal de todos os anos")
     else:
         df_final["desligado_no_mes"] = False
-        df_final["ativo"] = df_final["data de desligamento"].isna()
-        st.caption("📊 Nenhuma competência aplicada — mostrando totais gerais.")
+        df_final["ativo"] = df_final["data de desligamento"].isna() if "data de desligamento" in df_final.columns else True
+        st.info("📊 Período: Todos — Média mensal de todo o período histórico")
 
     # ========================================================
     # 🔍 BUSCA POR NOME
@@ -270,9 +281,40 @@ st.markdown("---")
 # =========================================================
 # VIEWS
 # =========================================================
-def view_overview(dfv):
+def view_overview(dfv, ano_filtro=None, mes_filtro=None, df_total=None):
+    """
+    Visão geral com análise do período filtrado e comparação com total.
+    
+    Args:
+        dfv: DataFrame filtrado
+        ano_filtro: Ano selecionado (None = todos)
+        mes_filtro: Mês selecionado (None = todos)
+        df_total: DataFrame completo para comparação (None = usar dfv)
+    """
     st.subheader("📍 Visão Geral — KPIs Consolidados")
-
+    
+    if df_total is None:
+        df_total = dfv
+    
+    # Determinar período selecionado
+    periodo_txt = "Todo o período"
+    if ano_filtro is not None and mes_filtro is not None:
+        meses_map = {
+            1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho",
+            7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+        }
+        periodo_txt = f"{meses_map[mes_filtro]}/{ano_filtro}"
+    elif ano_filtro is not None:
+        periodo_txt = f"Ano {ano_filtro} (média mensal)"
+    elif mes_filtro is not None:
+        meses_map = {
+            1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho",
+            7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+        }
+        periodo_txt = f"Mês {meses_map[mes_filtro]} (média de todos os anos)"
+    
+    st.markdown(f"**Período selecionado:** {periodo_txt}")
+    
     # ============================================================
     # 1. HEADCOUNT ATUAL
     # ============================================================
@@ -312,45 +354,111 @@ def view_overview(dfv):
     st.divider()
 
     # ============================================================
-    # 3. TURNOVER (COM HEADCOUNT DO MÊS)
+    # 3. TURNOVER - PERÍODO SELECIONADO vs TOTAL
     # ============================================================
     st.markdown("### 🔄 Turnover")
     st.caption("Calculado com base no headcount do início de cada mês")
     
-    # Verificar se tem período específico
-    periodo = None
-    if "desligado_no_mes" in dfv.columns and "ativo" in dfv.columns:
-        periodo = datetime.now()
+    # Calcular turnover do período selecionado
+    # Se só mês selecionado, usar df_total para pegar todos os anos, senão usar dfv
+    df_para_calculo = df_total if (mes_filtro is not None and ano_filtro is None) else dfv
+    turnover_periodo = calculate_turnover_by_period(df_para_calculo, ano_filtro, mes_filtro)
     
-    turnover_data = calculate_turnover(dfv, periodo)
+    # Calcular turnover total (sem filtros) para comparação (sempre usar df_total)
+    turnover_total_geral = calculate_turnover_by_period(df_total, None, None)
     
-    # Garantir que todos os valores existam
-    ativos_medio = turnover_data.get("ativos", 0) or 0
-    desligados_medio = turnover_data.get("desligados", 0) or 0
-    voluntarios_medio = turnover_data.get("voluntarios", 0) or 0
-    involuntarios_medio = turnover_data.get("involuntarios", 0) or 0
-    turnover_total = turnover_data.get("turnover_total", 0.0) or 0.0
-    turnover_vol = turnover_data.get("turnover_vol", 0.0) or 0.0
-    turnover_inv = turnover_data.get("turnover_inv", 0.0) or 0.0
+    # Mostrar período selecionado
+    st.markdown(f"#### 📅 Período Selecionado: {periodo_txt}")
     
-    # Quantidades
-    st.markdown("#### Quantidades (Médias Históricas)")
+    meses_consid = turnover_periodo.get("meses_considerados", 0)
+    if meses_consid > 0:
+        st.caption(f"Meses considerados: {meses_consid}")
+    
     c7, c8, c9, c10 = st.columns(4)
-    c7.metric("Headcount Médio", int(ativos_medio) if isinstance(ativos_medio, (int, float)) else int(float(ativos_medio)))
-    c8.metric("Desligados/mês (média)", f"{desligados_medio:.1f}" if isinstance(desligados_medio, float) else int(desligados_medio))
-    c9.metric("Voluntários/mês (média)", f"{voluntarios_medio:.1f}" if isinstance(voluntarios_medio, float) else int(voluntarios_medio))
-    c10.metric("Involuntários/mês (média)", f"{involuntarios_medio:.1f}" if isinstance(involuntarios_medio, float) else int(involuntarios_medio))
+    ativos_per = turnover_periodo.get("ativos", 0) or 0
+    deslig_per = turnover_periodo.get("desligados", 0) or 0
+    vol_per = turnover_periodo.get("voluntarios", 0) or 0
+    inv_per = turnover_periodo.get("involuntarios", 0) or 0
     
-    # Percentuais
-    st.markdown("#### Percentuais de Turnover")
+    c7.metric("Headcount Médio", int(ativos_per) if isinstance(ativos_per, (int, float)) else int(float(ativos_per)))
+    c8.metric("Desligados/mês (média)", f"{deslig_per:.1f}" if isinstance(deslig_per, float) else int(deslig_per))
+    c9.metric("Voluntários/mês (média)", f"{vol_per:.1f}" if isinstance(vol_per, float) else int(vol_per))
+    c10.metric("Involuntários/mês (média)", f"{inv_per:.1f}" if isinstance(inv_per, float) else int(inv_per))
+    
     c11, c12, c13 = st.columns(3)
-    c11.metric("Turnover Total (%)", f"{turnover_total:.1f}%")
-    c12.metric("Turnover Voluntário (%)", f"{turnover_vol:.1f}%")
-    c13.metric("Turnover Involuntário (%)", f"{turnover_inv:.1f}%")
+    c11.metric("Turnover Total (%)", f"{turnover_periodo.get('turnover_total', 0.0):.1f}%")
+    c12.metric("Turnover Voluntário (%)", f"{turnover_periodo.get('turnover_vol', 0.0):.1f}%")
+    c13.metric("Turnover Involuntário (%)", f"{turnover_periodo.get('turnover_inv', 0.0):.1f}%")
+    
+    # Comparação com total (sempre mostrar, exceto quando não há filtro de período)
+    # A comparação mostra o total vs o período selecionado
+    if ano_filtro is not None or mes_filtro is not None:
+        st.divider()
+        st.markdown("#### 📊 Comparação: Total (Todo o Período Histórico)")
+        
+        # Calcular variação (diferença entre período selecionado e total)
+        var_total = turnover_periodo.get('turnover_total', 0) - turnover_total_geral.get('turnover_total', 0)
+        var_vol = turnover_periodo.get('turnover_vol', 0) - turnover_total_geral.get('turnover_vol', 0)
+        var_inv = turnover_periodo.get('turnover_inv', 0) - turnover_total_geral.get('turnover_inv', 0)
+        
+        # Métricas do total com variação (delta mostra diferença do período selecionado)
+        c14, c15, c16 = st.columns(3)
+        var_total_val = var_total
+        var_vol_val = var_vol
+        var_inv_val = var_inv
+        
+        c14.metric(
+            "Turnover Total (%)",
+            f"{turnover_total_geral.get('turnover_total', 0.0):.1f}%",
+            delta=f"{var_total_val:+.1f}%"
+        )
+        c15.metric(
+            "Turnover Voluntário (%)",
+            f"{turnover_total_geral.get('turnover_vol', 0.0):.1f}%",
+            delta=f"{var_vol_val:+.1f}%"
+        )
+        c16.metric(
+            "Turnover Involuntário (%)",
+            f"{turnover_total_geral.get('turnover_inv', 0.0):.1f}%",
+            delta=f"{var_inv_val:+.1f}%"
+        )
+        st.caption(f"*Valores mostram o total histórico. Delta mostra diferença em relação ao período selecionado ({periodo_txt}).*")
+        
+        ativos_total = turnover_total_geral.get("ativos", 0) or 0
+        deslig_total = turnover_total_geral.get("desligados", 0) or 0
+        vol_total = turnover_total_geral.get("voluntarios", 0) or 0
+        inv_total = turnover_total_geral.get("involuntarios", 0) or 0
+        
+        c17, c18, c19, c20 = st.columns(4)
+        var_ativos = ativos_per - ativos_total
+        var_deslig = deslig_per - deslig_total
+        var_vol_qtd = vol_per - vol_total
+        var_inv_qtd = inv_per - inv_total
+        
+        c17.metric(
+            "Headcount Médio (Total)",
+            int(ativos_total),
+            delta=f"{var_ativos:+.0f}"
+        )
+        c18.metric(
+            "Desligados/mês (Total)",
+            f"{deslig_total:.1f}",
+            delta=f"{var_deslig:+.1f}"
+        )
+        c19.metric(
+            "Voluntários/mês (Total)",
+            f"{vol_total:.1f}",
+            delta=f"{var_vol_qtd:+.1f}"
+        )
+        c20.metric(
+            "Involuntários/mês (Total)",
+            f"{inv_total:.1f}",
+            delta=f"{var_inv_qtd:+.1f}"
+        )
     
     # Aviso se não houver dados
-    if ativos_medio == 0 and desligados_medio == 0:
-        st.info("ℹ️ Não há dados históricos suficientes para calcular turnover. Verifique se há registros com datas de admissão e desligamento.")
+    if ativos_per == 0 and deslig_per == 0:
+        st.info("ℹ️ Não há dados históricos suficientes para calcular turnover no período selecionado.")
 
     st.divider()
 
@@ -360,10 +468,10 @@ def view_overview(dfv):
     st.markdown("### 📊 Desligamentos por Mês")
     dismissals_data = calculate_monthly_dismissals(dfv)
     
-    c14, c15, c16 = st.columns(3)
-    c14.metric("Desligamentos Médios/mês", f"{dismissals_data['desligamentos_medio_mes']:.1f}")
-    c15.metric("Total de Desligados", dismissals_data["total_desligados"])
-    c16.metric("Meses com Dados", dismissals_data["meses_com_dados"])
+    c21, c22, c23 = st.columns(3)
+    c21.metric("Desligamentos Médios/mês", f"{dismissals_data['desligamentos_medio_mes']:.1f}")
+    c22.metric("Total de Desligados", dismissals_data["total_desligados"])
+    c23.metric("Meses com Dados", dismissals_data["meses_com_dados"])
     
     st.divider()
 
@@ -373,10 +481,10 @@ def view_overview(dfv):
     st.markdown("### ⏳ Tenure (Tempo Médio até Desligamento)")
     tenure_data = calculate_tenure(dfv)
     
-    c17, c18, c19 = st.columns(3)
-    c17.metric("Tenure Médio Total (meses)", f"{tenure_data['tenure_total']:.1f}")
-    c18.metric("Tenure Voluntário (meses)", f"{tenure_data['tenure_vol']:.1f}")
-    c19.metric("Tenure Involuntário (meses)", f"{tenure_data['tenure_inv']:.1f}")
+    c24, c25, c26 = st.columns(3)
+    c24.metric("Tenure Médio Total (meses)", f"{tenure_data['tenure_total']:.1f}")
+    c25.metric("Tenure Voluntário (meses)", f"{tenure_data['tenure_vol']:.1f}")
+    c26.metric("Tenure Involuntário (meses)", f"{tenure_data['tenure_inv']:.1f}")
     
     st.divider()
 
@@ -442,38 +550,68 @@ def view_headcount(dfv):
 # =========================================================
 # TURNOVER
 # =========================================================
-def view_turnover(dfv):
+def view_turnover(dfv, ano_filtro=None, mes_filtro=None, df_total=None):
+    """
+    View de turnover com análise do período filtrado e histórico.
+    
+    Args:
+        dfv: DataFrame filtrado
+        ano_filtro: Ano selecionado (None = todos)
+        mes_filtro: Mês selecionado (None = todos)
+        df_total: DataFrame completo para histórico
+    """
     st.subheader("🔄 Turnover — Evolução, Indicadores e Tenure")
 
     adm_c = col_like(dfv, "data de admissão")
     desl_c = col_like(dfv, "data de desligamento")
-    mot_c = col_like(dfv, "motivo de desligamento")
 
     if not (adm_c and desl_c):
         st.warning("⚠️ Faltam colunas de admissão/desligamento para esta seção.")
         return
+    
+    if df_total is None:
+        df_total = dfv
 
     # ============================================================
-    # 🔹 Caso tenha competência aplicada
+    # 🔹 Análise do Período Selecionado
     # ============================================================
-    if "ativo" in dfv.columns and "desligado_no_mes" in dfv.columns:
-        periodo = datetime.now()  # Placeholder
-        turnover_data = calculate_turnover(dfv, periodo)
-        
-        st.markdown("### 📅 Indicadores do Período Selecionado")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Ativos", turnover_data.get("ativos", 0))
-        c2.metric("Desligados", turnover_data.get("desligados", 0))
-        c3.metric("Turnover (%)", turnover_data.get("turnover_total", 0.0))
-        c4.metric(
-            "Vol / Inv (%)",
-            f"{turnover_data.get('turnover_vol', 0.0)} / {turnover_data.get('turnover_inv', 0.0)}"
-        )
+    # Determinar período
+    periodo_txt = "Todo o período"
+    meses_map = {
+        1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho",
+        7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+    }
+    
+    if ano_filtro is not None and mes_filtro is not None:
+        periodo_txt = f"{meses_map[mes_filtro]}/{ano_filtro}"
+    elif ano_filtro is not None:
+        periodo_txt = f"Ano {ano_filtro} (média mensal)"
+    elif mes_filtro is not None:
+        periodo_txt = f"Mês {meses_map[mes_filtro]} (média de todos os anos)"
+    
+    # Se só mês selecionado, usar df_total para pegar todos os anos
+    df_para_calculo = df_total if (mes_filtro is not None and ano_filtro is None) else dfv
+    turnover_data = calculate_turnover_by_period(df_para_calculo, ano_filtro, mes_filtro)
+    
+    st.markdown(f"### 📅 Indicadores do Período Selecionado: {periodo_txt}")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Headcount Médio", turnover_data.get("ativos", 0))
+    c2.metric("Desligados (média)", f"{turnover_data.get('desligados', 0):.1f}")
+    c3.metric("Turnover Total (%)", f"{turnover_data.get('turnover_total', 0.0):.1f}%")
+    c4.metric(
+        "Vol / Inv (%)",
+        f"{turnover_data.get('turnover_vol', 0.0):.1f} / {turnover_data.get('turnover_inv', 0.0):.1f}"
+    )
+    
+    meses_consid = turnover_data.get("meses_considerados", 0)
+    if meses_consid > 0:
+        st.caption(f"Meses considerados: {meses_consid}")
 
     # ============================================================
     # 🔸 Construção do histórico completo (usando módulo)
     # ============================================================
-    turn = calculate_turnover_history(dfv)
+    # Usar df_total para histórico completo se houver filtro
+    turn = calculate_turnover_history(df_total if (ano_filtro is not None or mes_filtro is not None) else dfv)
 
     if turn.empty:
         st.warning("Sem dados suficientes para gerar histórico.")
@@ -801,11 +939,11 @@ def view_ai(dfv):
 # =========================================================
 view = st.session_state["view"]
 if view == "overview":
-    view_overview(df_final.copy())
+    view_overview(df_final.copy(), ano_filtro, mes_filtro, df.copy())
 elif view == "headcount":
     view_headcount(df_final.copy())
 elif view == "turnover":
-    view_turnover(df_final.copy())
+    view_turnover(df_final.copy(), ano_filtro, mes_filtro, df.copy())
 elif view == "risk":
     if has_feature("Premium"):
         view_risk(df_final.copy())
@@ -815,7 +953,7 @@ elif view == "risk":
 elif view == "ai":
     view_ai(df_final.copy())
 else:
-    view_overview(df_final.copy())
+    view_overview(df_final.copy(), ano_filtro, mes_filtro, df.copy())
 
 
 

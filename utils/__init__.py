@@ -9,6 +9,7 @@ from utils.data_loader import (
 )
 from utils.kpi_helpers import (
     calculate_turnover,
+    calculate_turnover_by_period,
     calculate_turnover_history,
     calculate_tenure,
     calculate_headcount,
@@ -25,6 +26,7 @@ __all__ = [
     "col_like",
     "DATE_COLS",
     "calculate_turnover",
+    "calculate_turnover_by_period",
     "calculate_turnover_history",
     "calculate_tenure",
     "calculate_headcount",

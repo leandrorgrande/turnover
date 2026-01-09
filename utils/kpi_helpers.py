@@ -29,6 +29,183 @@ def norm_0_1(s: pd.Series) -> pd.Series:
     return (s - minv) / rng
 
 
+def calculate_turnover_by_period(
+    df: pd.DataFrame,
+    ano_filtro: Optional[int] = None,
+    mes_filtro: Optional[int] = None
+) -> Dict[str, float]:
+    """
+    Calcula turnover baseado no filtro de competência.
+    
+    Args:
+        df: DataFrame com dados de colaboradores
+        ano_filtro: Ano selecionado (None = todos os anos)
+        mes_filtro: Mês selecionado (None = todos os meses)
+    
+    Lógica:
+    - Se ambos None → média mensal de TODO o período
+    - Se só ano → média mensal daquele ano
+    - Se ano + mês → dados daquele mês específico
+    - Se só mês → média mensal daquele mês em todos os anos
+    
+    Returns:
+        Dict com turnover e quantidades
+    """
+    adm_col = col_like(df, "data de admissão")
+    desl_col = col_like(df, "data de desligamento")
+    tipo_desl_col = col_like(df, "tipo desligamento")
+    mot_col = col_like(df, "motivo de desligamento")
+    
+    if not adm_col or not desl_col:
+        return {
+            "turnover_total": 0.0, 
+            "turnover_vol": 0.0, 
+            "turnover_inv": 0.0,
+            "ativos": 0,
+            "desligados": 0,
+            "voluntarios": 0,
+            "involuntarios": 0
+        }
+    
+    dft = df.copy()
+    dft[adm_col] = pd.to_datetime(dft[adm_col], errors="coerce")
+    dft[desl_col] = pd.to_datetime(dft[desl_col], errors="coerce")
+    
+    dmin = dft[adm_col].min()
+    dmax = dft[desl_col].max() if dft[desl_col].notna().any() else datetime.now()
+    
+    if pd.isna(dmin):
+        return {
+            "turnover_total": 0.0, 
+            "turnover_vol": 0.0, 
+            "turnover_inv": 0.0,
+            "ativos": 0,
+            "desligados": 0,
+            "voluntarios": 0,
+            "involuntarios": 0
+        }
+    
+    # Definir range de meses baseado no filtro
+    if ano_filtro is not None and mes_filtro is not None:
+        # Caso 1: Ano + Mês específico → apenas aquele mês
+        inicio = pd.Timestamp(int(ano_filtro), mes_filtro, 1)
+        fim = inicio + pd.offsets.MonthEnd(1)
+        meses = [inicio]
+    elif ano_filtro is not None:
+        # Caso 2: Só ano → todos os meses daquele ano
+        inicio = pd.Timestamp(int(ano_filtro), 1, 1)
+        fim = pd.Timestamp(int(ano_filtro), 12, 31)
+        meses = pd.date_range(inicio, fim, freq="MS")
+    elif mes_filtro is not None:
+        # Caso 3: Só mês → aquele mês em todos os anos
+        anos_no_df = sorted(set(
+            dft[adm_col].dt.year.dropna().astype(int).tolist() +
+            dft[desl_col].dt.year.dropna().astype(int).tolist()
+        ))
+        meses = []
+        for ano in anos_no_df:
+            try:
+                meses.append(pd.Timestamp(ano, mes_filtro, 1))
+            except:
+                pass
+    else:
+        # Caso 4: Nenhum filtro → TODO o período
+        meses = pd.date_range(dmin, dmax, freq="MS")
+    
+    if len(meses) == 0:
+        return {
+            "turnover_total": 0.0, 
+            "turnover_vol": 0.0, 
+            "turnover_inv": 0.0,
+            "ativos": 0,
+            "desligados": 0,
+            "voluntarios": 0,
+            "involuntarios": 0
+        }
+    
+    vals = []
+    total_ativos = 0
+    total_desligados = 0
+    total_voluntarios = 0
+    total_involuntarios = 0
+    meses_validos = 0
+    
+    for mes in meses:
+        # Headcount no início do mês
+        inicio_mes = mes.replace(day=1)
+        headcount_inicio = dft[
+            (dft[adm_col] <= inicio_mes) & 
+            ((dft[desl_col].isna()) | (dft[desl_col] > inicio_mes))
+        ]
+        
+        # Desligados no mês
+        deslig_mes = dft[
+            (dft[desl_col].notna()) & 
+            (dft[desl_col].dt.to_period("M") == mes.to_period("M"))
+        ]
+        
+        hc = len(headcount_inicio)
+        d = len(deslig_mes)
+        
+        if hc == 0:
+            continue
+        
+        meses_validos += 1
+        total_ativos += hc
+        total_desligados += d
+        
+        # Identificar voluntários
+        dv = 0
+        if tipo_desl_col and not deslig_mes.empty:
+            dv = deslig_mes[tipo_desl_col].astype(str).str.lower().str.contains(
+                "voluntário|pedido|demissão|rescisão", case=False, na=False
+            ).sum()
+        elif mot_col and not deslig_mes.empty:
+            dv = deslig_mes[mot_col].astype(str).str.lower().str.contains(
+                "pedido|demissão|rescisão|voluntário", case=False, na=False
+            ).sum()
+        
+        di = d - dv
+        total_voluntarios += dv
+        total_involuntarios += di
+        
+        vals.append([
+            (d/hc)*100 if hc>0 else 0,
+            (dv/hc)*100 if hc>0 else 0,
+            (di/hc)*100 if hc>0 else 0
+        ])
+    
+    if not vals or meses_validos == 0:
+        return {
+            "turnover_total": 0.0, 
+            "turnover_vol": 0.0, 
+            "turnover_inv": 0.0,
+            "ativos": 0,
+            "desligados": 0,
+            "voluntarios": 0,
+            "involuntarios": 0
+        }
+    
+    arr = np.array(vals)
+    
+    # Calcular médias
+    avg_ativos = int(total_ativos / meses_validos) if meses_validos > 0 else 0
+    avg_desligados = round(total_desligados / meses_validos, 1) if meses_validos > 0 else 0.0
+    avg_voluntarios = round(total_voluntarios / meses_validos, 1) if meses_validos > 0 else 0.0
+    avg_involuntarios = round(total_involuntarios / meses_validos, 1) if meses_validos > 0 else 0.0
+    
+    return {
+        "turnover_total": round(arr[:, 0].mean(), 1),
+        "turnover_vol": round(arr[:, 1].mean(), 1),
+        "turnover_inv": round(arr[:, 2].mean(), 1),
+        "ativos": avg_ativos,
+        "desligados": avg_desligados,
+        "voluntarios": avg_voluntarios,
+        "involuntarios": avg_involuntarios,
+        "meses_considerados": meses_validos
+    }
+
+
 def calculate_turnover(
     df: pd.DataFrame,
     periodo_mes: Optional[datetime] = None
