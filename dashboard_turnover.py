@@ -15,6 +15,9 @@ from utils import (
     calculate_turnover_history,
     calculate_tenure,
     calculate_headcount,
+    calculate_headcount_temporal,
+    calculate_headcount_growth,
+    calculate_headcount_by_dimension_temporal,
     calculate_basic_kpis,
     calculate_contract_types,
     calculate_monthly_dismissals,
@@ -516,35 +519,494 @@ def view_overview(dfv, ano_filtro=None, mes_filtro=None, df_total=None):
 # Headcount
 # =========================================================
 
-def view_headcount(dfv):
-    st.subheader("👥 Headcount — Estrutura e Evolução")
-
-    # Usar módulo de cálculo
-    dist = calculate_headcount(dfv, "departamento")
+def view_headcount(dfv, ano_filtro=None, mes_filtro=None, df_total=None):
+    """
+    View de headcount com análises temporais e comparações.
+    
+    Args:
+        dfv: DataFrame filtrado
+        ano_filtro: Ano selecionado (None = todos)
+        mes_filtro: Mês selecionado (None = todos)
+        df_total: DataFrame completo para análises temporais
+    """
+    st.subheader("👥 Headcount — Análises Temporais e Comparações")
+    
+    if df_total is None:
+        df_total = dfv
+    
+    # Determinar período
+    periodo_txt = "Todo o período"
+    meses_map = {
+        1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril", 5: "Maio", 6: "Junho",
+        7: "Julho", 8: "Agosto", 9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
+    }
+    
+    if ano_filtro is not None and mes_filtro is not None:
+        periodo_txt = f"{meses_map[mes_filtro]}/{ano_filtro}"
+    elif ano_filtro is not None:
+        periodo_txt = f"Ano {ano_filtro}"
+    elif mes_filtro is not None:
+        periodo_txt = f"Mês {meses_map[mes_filtro]}"
+    
+    st.caption(f"**Período selecionado:** {periodo_txt}")
+    
+    # ============================================================
+    # 1. HEADCOUNT ATUAL POR DEPARTAMENTO
+    # ============================================================
+    st.markdown("### 📊 Headcount Atual por Departamento")
+    
+    # Data de referência baseada no filtro
+    data_ref = None
+    if ano_filtro is not None and mes_filtro is not None:
+        data_ref = pd.Timestamp(int(ano_filtro), mes_filtro, 1) + pd.offsets.MonthEnd(1)
+    elif ano_filtro is not None:
+        data_ref = pd.Timestamp(int(ano_filtro), 12, 31)
+    
+    dist = calculate_headcount(dfv if data_ref is None else df_total, "departamento", data_ref)
     
     if dist.empty:
-        st.info("Sem dados suficientes para calcular headcount.")
-        return
+        st.info("Sem dados suficientes para calcular headcount por departamento.")
+    else:
+        # Comparação com total se houver filtro
+        if ano_filtro is not None or mes_filtro is not None:
+            dist_total = calculate_headcount(df_total, "departamento", None)
+            
+            if not dist_total.empty:
+                # Mesclar para comparar
+                comparacao = dist.merge(dist_total, on="departamento", how="outer", suffixes=("_Periodo", "_Total"))
+                comparacao = comparacao.fillna(0)
+                comparacao["Diferença"] = comparacao["Headcount_Periodo"] - comparacao["Headcount_Total"]
+                comparacao["Variação_%"] = (
+                    ((comparacao["Headcount_Periodo"] - comparacao["Headcount_Total"]) / comparacao["Headcount_Total"]) * 100
+                ).round(2)
+                comparacao = comparacao.sort_values("Headcount_Periodo", ascending=False)
+                
+                st.markdown("#### Comparação: Período Selecionado vs Total Histórico")
+                st.dataframe(
+                    comparacao[["departamento", "Headcount_Periodo", "Headcount_Total", "Diferença", "Variação_%"]].rename(columns={
+                        "departamento": "Departamento",
+                        "Headcount_Periodo": f"Headcount ({periodo_txt})",
+                        "Headcount_Total": "Headcount (Total)",
+                        "Diferença": "Diferença",
+                        "Variação_%": "Variação (%)"
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
+                st.divider()
+        
+        # Gráfico de barras do período selecionado
+        fig1 = px.bar(
+            dist,
+            x="departamento",
+            y="Headcount",
+            color="Headcount",
+            color_continuous_scale="Tealgrn",
+            text="Headcount"
+        )
+        fig1.update_traces(textposition="outside")
+        fig1.update_layout(
+            template="plotly_dark",
+            title=f"Headcount por Departamento ({periodo_txt})",
+            xaxis_title="Departamento",
+            yaxis_title="Quantidade",
+            showlegend=False
+        )
+        st.plotly_chart(fig1, use_container_width=True)
+        
+        # Tabela com percentuais
+        st.dataframe(dist, use_container_width=True, hide_index=True)
     
-    dept_col = "departamento"
-    
-    fig = px.bar(
-        dist,
-        x=dept_col,
-        y="Headcount",
-        color="Headcount",
-        color_continuous_scale="Tealgrn"
-    )
-    fig.update_layout(
-        template="plotly_dark",
-        title="Headcount por Departamento (Ativos no Período)",
-        xaxis_title="Departamento",
-        yaxis_title="Qtd"
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    st.divider()
 
-    # Tabela com percentuais
-    st.dataframe(dist, use_container_width=True)
+    # ============================================================
+    # 2. EVOLUÇÃO TEMPORAL POR DEPARTAMENTO
+    # ============================================================
+    st.markdown("### 📈 Evolução Temporal do Headcount por Departamento")
+    
+    hc_temporal = calculate_headcount_temporal(df_total, "departamento")
+    
+    if not hc_temporal.empty:
+        # Filtrar período se necessário para comparação
+        if ano_filtro is not None or mes_filtro is not None:
+            # Mostrar evolução do período selecionado vs total
+            tab1, tab2 = st.tabs(["📊 Período Selecionado", "📈 Todo o Histórico"])
+            
+            with tab1:
+                # Filtrar apenas o período selecionado
+                if ano_filtro is not None and mes_filtro is not None:
+                    mes_sel_str = f"{ano_filtro}-{mes_filtro:02d}"
+                    hc_periodo_sel = hc_temporal[hc_temporal["Mês"] == mes_sel_str]
+                    if not hc_periodo_sel.empty:
+                        st.markdown(f"#### Headcount em {periodo_txt}")
+                        fig_periodo = px.bar(
+                            hc_periodo_sel,
+                            x="departamento",
+                            y="Headcount",
+                            color="Headcount",
+                            color_continuous_scale="Tealgrn",
+                            title=f"Headcount por Departamento - {periodo_txt}",
+                            text="Headcount"
+                        )
+                        fig_periodo.update_traces(textposition="outside")
+                        fig_periodo.update_layout(
+                            template="plotly_dark",
+                            showlegend=False,
+                            xaxis_title="Departamento",
+                            yaxis_title="Headcount"
+                        )
+                        st.plotly_chart(fig_periodo, use_container_width=True)
+                        st.dataframe(hc_periodo_sel[["departamento", "Headcount"]].sort_values("Headcount", ascending=False), use_container_width=True, hide_index=True)
+                elif ano_filtro is not None:
+                    # Filtrar meses do ano
+                    hc_ano_sel = hc_temporal[hc_temporal["Mês"].str.startswith(str(ano_filtro))]
+                    if not hc_ano_sel.empty:
+                        fig_periodo = px.line(
+                            hc_ano_sel,
+                            x="Mês",
+                            y="Headcount",
+                            color="departamento",
+                            markers=True,
+                            title=f"Evolução do Headcount por Departamento - Ano {ano_filtro}"
+                        )
+                        fig_periodo.update_layout(
+                            template="plotly_dark",
+                            xaxis_title="Mês",
+                            yaxis_title="Headcount",
+                            hovermode="x unified",
+                            legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.01)
+                        )
+                        st.plotly_chart(fig_periodo, use_container_width=True)
+                elif mes_filtro is not None:
+                    # Filtrar apenas aquele mês em todos os anos (formato: YYYY-MM)
+                    meses_map_num = {
+                        1: "01", 2: "02", 3: "03", 4: "04", 5: "05", 6: "06",
+                        7: "07", 8: "08", 9: "09", 10: "10", 11: "11", 12: "12"
+                    }
+                    mes_num_str = meses_map_num[mes_filtro]
+                    # Filtrar linhas onde o mês termina com "-MM" (ex: "2024-01", "2023-01")
+                    hc_mes_sel = hc_temporal[hc_temporal["Mês"].str.endswith(f"-{mes_num_str}")]
+                    if not hc_mes_sel.empty:
+                        fig_periodo = px.line(
+                            hc_mes_sel,
+                            x="Mês",
+                            y="Headcount",
+                            color="departamento",
+                            markers=True,
+                            title=f"Evolução do Headcount por Departamento - {meses_map[mes_filtro]} (Todos os Anos)"
+                        )
+                        fig_periodo.update_layout(
+                            template="plotly_dark",
+                            xaxis_title="Mês (Ano-Mês)",
+                            yaxis_title="Headcount",
+                            hovermode="x unified",
+                            legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.01)
+                        )
+                        st.plotly_chart(fig_periodo, use_container_width=True)
+            
+            with tab2:
+                # Gráfico completo
+                fig2 = px.line(
+                    hc_temporal,
+                    x="Mês",
+                    y="Headcount",
+                    color="departamento",
+                    markers=True,
+                    title="Evolução Completa do Headcount por Departamento (Todo o Histórico)"
+                )
+                fig2.update_layout(
+                    template="plotly_dark",
+                    xaxis_title="Mês",
+                    yaxis_title="Headcount",
+                    hovermode="x unified",
+                    legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.01)
+                )
+                st.plotly_chart(fig2, use_container_width=True)
+        else:
+            # Mostrar evolução completa
+            fig2 = px.line(
+                hc_temporal,
+                x="Mês",
+                y="Headcount",
+                color="departamento",
+                markers=True,
+                title="Evolução do Headcount por Departamento ao Longo do Tempo"
+            )
+            fig2.update_layout(
+                template="plotly_dark",
+                xaxis_title="Mês",
+                yaxis_title="Headcount",
+                hovermode="x unified",
+                legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.01)
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+        
+        # Calcular crescimento
+        hc_growth = calculate_headcount_growth(hc_temporal, "departamento")
+        
+        if not hc_growth.empty:
+            st.markdown("#### 📊 Análise de Crescimento por Departamento")
+            
+            # Últimos 12 meses de crescimento
+            ultimos_meses = hc_growth["Mês"].unique()[-12:] if len(hc_growth["Mês"].unique()) > 12 else hc_growth["Mês"].unique()
+            hc_growth_recente = hc_growth[hc_growth["Mês"].isin(ultimos_meses)]
+            
+            if not hc_growth_recente.empty:
+                # Resumo de crescimento total por departamento
+                # Calcular crescimento total (primeiro vs último) e médio (últimos meses)
+                resumo_crescimento = []
+                for dept in hc_growth_recente["departamento"].unique():
+                    dept_temporal = hc_temporal[hc_temporal["departamento"] == dept].sort_values("Mês")
+                    dept_growth = hc_growth_recente[hc_growth_recente["departamento"] == dept]
+                    
+                    if not dept_temporal.empty:
+                        primeiro_mes = dept_temporal.iloc[0]
+                        ultimo_mes = dept_temporal.iloc[-1]
+                        
+                        hc_inicial = primeiro_mes["Headcount"]
+                        hc_final = ultimo_mes["Headcount"]
+                        variacao_total = hc_final - hc_inicial
+                        pct_total = (variacao_total / hc_inicial * 100) if hc_inicial > 0 else 0
+                        
+                        resumo_dict = {
+                            "departamento": dept,
+                            "Headcount_Inicial": int(hc_inicial),
+                            "Headcount_Final": int(hc_final),
+                            "Variação_Total": int(variacao_total),
+                            "Crescimento_%_Total": round(pct_total, 2)
+                        }
+                        
+                        # Adicionar médias dos últimos meses se houver
+                        if not dept_growth.empty:
+                            resumo_dict["Crescimento_Absoluto_Médio"] = round(dept_growth["Crescimento_Absoluto"].mean(), 1)
+                            resumo_dict["Crescimento_%_Médio"] = round(dept_growth["Crescimento_%"].mean(), 2)
+                        
+                        resumo_crescimento.append(resumo_dict)
+                
+                crescimento_total = pd.DataFrame(resumo_crescimento)
+                if not crescimento_total.empty:
+                    crescimento_total = crescimento_total.sort_values("Variação_Total", ascending=False)
+                
+                if not crescimento_total.empty:
+                    st.dataframe(
+                        crescimento_total.round(2), 
+                        use_container_width=True, 
+                        hide_index=True
+                    )
+                
+                # Gráfico de crescimento
+                fig3 = px.bar(
+                    hc_growth_recente,
+                    x="Mês",
+                    y="Crescimento_Absoluto",
+                    color="departamento",
+                    title="Crescimento Absoluto do Headcount por Departamento (Últimos 12 meses)",
+                    barmode="group"
+                )
+                fig3.update_layout(
+                    template="plotly_dark",
+                    xaxis_title="Mês",
+                    yaxis_title="Crescimento Absoluto",
+                    legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.01)
+                )
+                st.plotly_chart(fig3, use_container_width=True)
+                
+                # Gráfico de crescimento percentual
+                fig3b = px.bar(
+                    hc_growth_recente,
+                    x="Mês",
+                    y="Crescimento_%",
+                    color="departamento",
+                    title="Crescimento Percentual do Headcount por Departamento (Últimos 12 meses)",
+                    barmode="group"
+                )
+                fig3b.update_layout(
+                    template="plotly_dark",
+                    xaxis_title="Mês",
+                    yaxis_title="Crescimento (%)",
+                    legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.01)
+                )
+                st.plotly_chart(fig3b, use_container_width=True)
+    else:
+        st.info("ℹ️ Não há dados históricos suficientes para análise temporal.")
+    
+    st.divider()
+
+    # ============================================================
+    # 3. ANÁLISE POR GÊNERO AO LONGO DO TEMPO
+    # ============================================================
+    st.markdown("### 👥 Análise por Gênero ao Longo do Tempo")
+    
+    hc_genero = calculate_headcount_by_dimension_temporal(df_total, "genero")
+    
+    if not hc_genero.empty:
+        fig4 = px.line(
+            hc_genero,
+            x="Mês",
+            y="Headcount",
+            color="Gênero",
+            markers=True,
+            title="Evolução do Headcount por Gênero"
+        )
+        fig4.update_layout(
+            template="plotly_dark",
+            xaxis_title="Mês",
+            yaxis_title="Headcount",
+            hovermode="x unified"
+        )
+        st.plotly_chart(fig4, use_container_width=True)
+        
+        # Distribuição atual por gênero
+        gen_col = col_like(dfv, "genero")
+        if gen_col:
+            dist_genero = calculate_headcount(dfv if data_ref is None else df_total, "genero", data_ref)
+            if not dist_genero.empty:
+                c1, c2 = st.columns(2)
+                
+                with c1:
+                    fig5 = px.pie(
+                        dist_genero,
+                        values="Headcount",
+                        names="genero",
+                        title=f"Distribuição por Gênero ({periodo_txt})"
+                    )
+                    fig5.update_layout(template="plotly_dark")
+                    st.plotly_chart(fig5, use_container_width=True)
+                
+                with c2:
+                    # Mostrar crescimento por gênero se houver dados temporais
+                    hc_genero_growth = calculate_headcount_growth(hc_genero, "Gênero") if not hc_genero.empty else pd.DataFrame()
+                    if not hc_genero_growth.empty:
+                        ultimos_meses_gen = hc_genero_growth["Mês"].unique()[-6:] if len(hc_genero_growth["Mês"].unique()) > 6 else hc_genero_growth["Mês"].unique()
+                        hc_genero_recente = hc_genero_growth[hc_genero_growth["Mês"].isin(ultimos_meses_gen)]
+                        
+                        if not hc_genero_recente.empty:
+                            crescimento_genero = hc_genero_recente.groupby("Gênero").agg({
+                                "Crescimento_Absoluto": "sum",
+                                "Crescimento_%": "mean"
+                            }).reset_index()
+                            
+                            fig5b = px.bar(
+                                crescimento_genero,
+                                x="Gênero",
+                                y="Crescimento_Absoluto",
+                                color="Crescimento_Absoluto",
+                                color_continuous_scale="Blues",
+                                title="Crescimento por Gênero (Últimos 6 meses)",
+                                text="Crescimento_Absoluto"
+                            )
+                            fig5b.update_traces(textposition="outside")
+                            fig5b.update_layout(
+                                template="plotly_dark",
+                                showlegend=False,
+                                xaxis_title="Gênero",
+                                yaxis_title="Crescimento Absoluto"
+                            )
+                            st.plotly_chart(fig5b, use_container_width=True)
+    else:
+        st.info("ℹ️ Não há dados de gênero disponíveis para análise temporal.")
+    
+    st.divider()
+
+    # ============================================================
+    # 4. ANÁLISE POR TEMPO DE CASA
+    # ============================================================
+    st.markdown("### ⏳ Análise por Tempo de Casa ao Longo do Tempo")
+    
+    hc_tempo_casa = calculate_headcount_by_dimension_temporal(df_total, "tempo_casa")
+    
+    if not hc_tempo_casa.empty:
+        fig6 = px.area(
+            hc_tempo_casa,
+            x="Mês",
+            y="Headcount",
+            color="Faixa Tempo de Casa",
+            title="Evolução do Headcount por Faixa de Tempo de Casa",
+            stacked=True
+        )
+        fig6.update_layout(
+            template="plotly_dark",
+            xaxis_title="Mês",
+            yaxis_title="Headcount",
+            hovermode="x unified",
+            legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.01)
+        )
+        st.plotly_chart(fig6, use_container_width=True)
+        
+        # Último mês disponível
+        ultimo_mes = hc_tempo_casa["Mês"].max()
+        dist_tempo_casa_ultimo = hc_tempo_casa[hc_tempo_casa["Mês"] == ultimo_mes]
+        
+        if not dist_tempo_casa_ultimo.empty:
+            fig7 = px.bar(
+                dist_tempo_casa_ultimo,
+                x="Faixa Tempo de Casa",
+                y="Headcount",
+                color="Headcount",
+                color_continuous_scale="Viridis",
+                title=f"Distribuição por Tempo de Casa - {ultimo_mes}"
+            )
+            fig7.update_layout(
+                template="plotly_dark",
+                xaxis_title="Faixa de Tempo de Casa",
+                yaxis_title="Headcount",
+                showlegend=False
+            )
+            st.plotly_chart(fig7, use_container_width=True)
+    else:
+        st.info("ℹ️ Não há dados suficientes para análise por tempo de casa.")
+    
+    st.divider()
+
+    # ============================================================
+    # 5. ANÁLISE POR PERFORMANCE
+    # ============================================================
+    st.markdown("### ⭐ Análise por Performance ao Longo do Tempo")
+    
+    hc_performance = calculate_headcount_by_dimension_temporal(df_total, "avaliacao")
+    
+    if not hc_performance.empty:
+        fig8 = px.line(
+            hc_performance,
+            x="Mês",
+            y="Headcount",
+            color="Performance",
+            markers=True,
+            title="Evolução do Headcount por Performance"
+        )
+        fig8.update_layout(
+            template="plotly_dark",
+            xaxis_title="Mês",
+            yaxis_title="Headcount",
+            hovermode="x unified",
+            legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.01)
+        )
+        st.plotly_chart(fig8, use_container_width=True)
+        
+        # Último mês disponível
+        ultimo_mes = hc_performance["Mês"].max()
+        dist_perf_ultimo = hc_performance[hc_performance["Mês"] == ultimo_mes]
+        
+        if not dist_perf_ultimo.empty:
+            fig9 = px.bar(
+                dist_perf_ultimo,
+                x="Performance",
+                y="Headcount",
+                color="Headcount",
+                color_continuous_scale="Plasma",
+                title=f"Distribuição por Performance - {ultimo_mes}",
+                text="Headcount"
+            )
+            fig9.update_traces(textposition="outside")
+            fig9.update_layout(
+                template="plotly_dark",
+                xaxis_title="Performance",
+                yaxis_title="Headcount",
+                showlegend=False
+            )
+            st.plotly_chart(fig9, use_container_width=True)
+    else:
+        st.info("ℹ️ Não há dados de performance disponíveis para análise temporal.")
 
 
 # =========================================================
@@ -941,7 +1403,7 @@ view = st.session_state["view"]
 if view == "overview":
     view_overview(df_final.copy(), ano_filtro, mes_filtro, df.copy())
 elif view == "headcount":
-    view_headcount(df_final.copy())
+    view_headcount(df_final.copy(), ano_filtro, mes_filtro, df.copy())
 elif view == "turnover":
     view_turnover(df_final.copy(), ano_filtro, mes_filtro, df.copy())
 elif view == "risk":

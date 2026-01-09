@@ -508,14 +508,15 @@ def calculate_tenure(df: pd.DataFrame) -> Dict[str, float]:
     }
 
 
-def calculate_headcount(df: pd.DataFrame, group_by: str = "departamento") -> pd.DataFrame:
+def calculate_headcount(df: pd.DataFrame, group_by: str = "departamento", data_referencia: Optional[datetime] = None) -> pd.DataFrame:
     """
-    Calcula headcount agrupado por coluna especificada.
-    Exclui apenas quem tem data de desligamento (está desligado).
+    Calcula headcount agrupado por coluna especificada em uma data de referência.
+    Exclui apenas quem tem data de desligamento anterior à referência.
     
     Args:
         df: DataFrame com colaboradores
         group_by: Coluna para agrupar (padrão: "departamento")
+        data_referencia: Data de referência (None = atual)
     
     Returns:
         DataFrame com headcount e percentual
@@ -525,15 +526,31 @@ def calculate_headcount(df: pd.DataFrame, group_by: str = "departamento") -> pd.
     if not group_col:
         return pd.DataFrame()
     
-    # Filtrar apenas quem NÃO tem data de desligamento (ativo)
+    dft = df.copy()
+    adm_col = col_like(df, "data de admissão")
     desl_col = col_like(df, "data de desligamento")
+    
+    if data_referencia is None:
+        data_referencia = datetime.now()
+    
+    # Converter datas
+    if adm_col:
+        dft[adm_col] = pd.to_datetime(dft[adm_col], errors="coerce")
     if desl_col:
-        # Apenas quem não tem data de desligamento
-        base = df[df[desl_col].isna()].copy()
+        dft[desl_col] = pd.to_datetime(dft[desl_col], errors="coerce")
+    
+    # Filtrar quem estava ativo na data de referência
+    if adm_col and desl_col:
+        base = dft[
+            (dft[adm_col] <= data_referencia) & 
+            ((dft[desl_col].isna()) | (dft[desl_col] > data_referencia))
+        ].copy()
+    elif desl_col:
+        base = dft[(dft[desl_col].isna()) | (dft[desl_col] > data_referencia)].copy()
     elif "ativo" in df.columns:
-        base = df[df["ativo"] == True].copy()
+        base = dft[dft["ativo"] == True].copy()
     else:
-        base = df.copy()
+        base = dft.copy()
     
     if base.empty:
         return pd.DataFrame()
@@ -547,6 +564,94 @@ def calculate_headcount(df: pd.DataFrame, group_by: str = "departamento") -> pd.
     dist["%"] = (dist["Headcount"] / dist["Headcount"].sum()) * 100
     
     return dist.sort_values("Headcount", ascending=False).reset_index(drop=True)
+
+
+def calculate_headcount_temporal(df: pd.DataFrame, group_by: str = "departamento") -> pd.DataFrame:
+    """
+    Calcula evolução temporal do headcount agrupado por coluna especificada.
+    
+    Args:
+        df: DataFrame com colaboradores
+        group_by: Coluna para agrupar (padrão: "departamento")
+    
+    Returns:
+        DataFrame com colunas: Mês, {group_by}, Headcount
+    """
+    group_col = col_like(df, group_by)
+    adm_col = col_like(df, "data de admissão")
+    desl_col = col_like(df, "data de desligamento")
+    
+    if not group_col or not adm_col or not desl_col:
+        return pd.DataFrame()
+    
+    dft = df.copy()
+    dft[adm_col] = pd.to_datetime(dft[adm_col], errors="coerce")
+    dft[desl_col] = pd.to_datetime(dft[desl_col], errors="coerce")
+    
+    dmin = dft[adm_col].min()
+    dmax = dft[desl_col].max() if dft[desl_col].notna().any() else datetime.now()
+    
+    if pd.isna(dmin):
+        return pd.DataFrame()
+    
+    meses = pd.date_range(dmin, dmax, freq="MS")
+    rows = []
+    
+    for mes in meses:
+        inicio_mes = mes.replace(day=1)
+        # Headcount no início do mês
+        ativos_mes = dft[
+            (dft[adm_col] <= inicio_mes) & 
+            ((dft[desl_col].isna()) | (dft[desl_col] > inicio_mes))
+        ]
+        
+        if ativos_mes.empty:
+            continue
+        
+        mat_col = col_like(ativos_mes, "matricula")
+        if not mat_col:
+            continue
+        
+        # Agrupar por grupo especificado
+        hc_por_grupo = ativos_mes.groupby(group_col)[mat_col].count().reset_index()
+        hc_por_grupo.columns = [group_by, "Headcount"]
+        hc_por_grupo["Mês"] = mes.strftime("%Y-%m")
+        
+        rows.append(hc_por_grupo)
+    
+    if not rows:
+        return pd.DataFrame()
+    
+    result = pd.concat(rows, ignore_index=True)
+    return result.sort_values(["Mês", group_by]).reset_index(drop=True)
+
+
+def calculate_headcount_growth(df_temporal: pd.DataFrame, group_by: str = "departamento") -> pd.DataFrame:
+    """
+    Calcula crescimento do headcount ao longo do tempo.
+    
+    Args:
+        df_temporal: DataFrame retornado por calculate_headcount_temporal
+        group_by: Coluna de agrupamento
+    
+    Returns:
+        DataFrame com crescimento absoluto e percentual
+    """
+    if df_temporal.empty or "Mês" not in df_temporal.columns or "Headcount" not in df_temporal.columns:
+        return pd.DataFrame()
+    
+    df_growth = df_temporal.copy()
+    df_growth = df_growth.sort_values(["Mês", group_by])
+    
+    # Calcular crescimento por grupo
+    df_growth["Headcount_anterior"] = df_growth.groupby(group_by)["Headcount"].shift(1)
+    df_growth["Crescimento_Absoluto"] = df_growth["Headcount"] - df_growth["Headcount_anterior"]
+    df_growth["Crescimento_%"] = (
+        ((df_growth["Headcount"] - df_growth["Headcount_anterior"]) / df_growth["Headcount_anterior"]) * 100
+    ).round(2)
+    df_growth["Crescimento_%"] = df_growth["Crescimento_%"].fillna(0)
+    
+    return df_growth
 
 
 def calculate_contract_types(df: pd.DataFrame) -> pd.DataFrame:
@@ -568,6 +673,91 @@ def calculate_contract_types(df: pd.DataFrame) -> pd.DataFrame:
     dist["Percentual (%)"] = (dist["Quantidade"] / dist["Quantidade"].sum() * 100).round(1)
     
     return dist.sort_values("Quantidade", ascending=False).reset_index(drop=True)
+
+
+def calculate_headcount_by_dimension_temporal(df: pd.DataFrame, dimension: str) -> pd.DataFrame:
+    """
+    Calcula evolução temporal do headcount por dimensão específica (gênero, tempo de casa, performance).
+    
+    Args:
+        df: DataFrame com colaboradores
+        dimension: "genero", "tempo_casa" (faixas), ou "avaliacao" (performance)
+    
+    Returns:
+        DataFrame temporal com evolução
+    """
+    adm_col = col_like(df, "data de admissão")
+    desl_col = col_like(df, "data de desligamento")
+    
+    if not adm_col or not desl_col:
+        return pd.DataFrame()
+    
+    dft = df.copy()
+    dft[adm_col] = pd.to_datetime(dft[adm_col], errors="coerce")
+    dft[desl_col] = pd.to_datetime(dft[desl_col], errors="coerce")
+    
+    dmin = dft[adm_col].min()
+    dmax = dft[desl_col].max() if dft[desl_col].notna().any() else datetime.now()
+    
+    if pd.isna(dmin):
+        return pd.DataFrame()
+    
+    # Mapear dimensão para coluna
+    if dimension == "genero":
+        dim_col = col_like(df, "genero")
+        col_name = "Gênero"
+    elif dimension == "tempo_casa":
+        dim_col = None  # Vamos calcular faixas
+        col_name = "Faixa Tempo de Casa"
+    elif dimension == "avaliacao" or dimension == "performance":
+        dim_col = col_like(df, "avaliação")
+        col_name = "Performance"
+    else:
+        return pd.DataFrame()
+    
+    meses = pd.date_range(dmin, dmax, freq="MS")
+    rows = []
+    
+    for mes in meses:
+        inicio_mes = mes.replace(day=1)
+        ativos_mes = dft[
+            (dft[adm_col] <= inicio_mes) & 
+            ((dft[desl_col].isna()) | (dft[desl_col] > inicio_mes))
+        ]
+        
+        if ativos_mes.empty:
+            continue
+        
+        mat_col = col_like(ativos_mes, "matricula")
+        if not mat_col:
+            continue
+        
+        # Processar dimensão
+        if dimension == "tempo_casa":
+            # Calcular faixas de tempo de casa
+            ativos_mes["tempo_casa_meses"] = (inicio_mes - ativos_mes[adm_col]).dt.days / 30
+            ativos_mes["faixa"] = pd.cut(
+                ativos_mes["tempo_casa_meses"],
+                bins=[0, 6, 12, 24, 36, np.inf],
+                labels=["0-6m", "6-12m", "12-24m", "24-36m", "+36m"],
+                include_lowest=True
+            )
+            hc_por_dim = ativos_mes.groupby("faixa")[mat_col].count().reset_index()
+            hc_por_dim.columns = [col_name, "Headcount"]
+        elif dim_col:
+            hc_por_dim = ativos_mes.groupby(dim_col)[mat_col].count().reset_index()
+            hc_por_dim.columns = [col_name, "Headcount"]
+        else:
+            continue
+        
+        hc_por_dim["Mês"] = mes.strftime("%Y-%m")
+        rows.append(hc_por_dim)
+    
+    if not rows:
+        return pd.DataFrame()
+    
+    result = pd.concat(rows, ignore_index=True)
+    return result.sort_values(["Mês", col_name]).reset_index(drop=True)
 
 
 def calculate_monthly_dismissals(df: pd.DataFrame) -> Dict[str, float]:
