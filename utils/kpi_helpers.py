@@ -34,19 +34,20 @@ def calculate_turnover(
     periodo_mes: Optional[datetime] = None
 ) -> Dict[str, float]:
     """
-    Calcula turnover total, voluntário e involuntário.
+    Calcula turnover total, voluntário e involuntário usando tipo desligamento e motivo.
     
-    Fórmula: Turnover = (Desligados no período / Ativos no período) * 100
+    Fórmula: Turnover = (Desligados no mês / Headcount no início do mês) * 100
     
     Args:
         df: DataFrame com dados de colaboradores
         periodo_mes: Data de referência (se None, calcula histórico médio)
     
     Returns:
-        Dict com turnover_total, turnover_vol, turnover_inv
+        Dict com turnover_total, turnover_vol, turnover_inv e quantidades
     """
     adm_col = col_like(df, "data de admissão")
     desl_col = col_like(df, "data de desligamento")
+    tipo_desl_col = col_like(df, "tipo desligamento")
     mot_col = col_like(df, "motivo de desligamento")
     
     if not adm_col or not desl_col:
@@ -66,10 +67,12 @@ def calculate_turnover(
     
     # Se tem período específico (competência)
     if periodo_mes and "ativo" in df.columns and "desligado_no_mes" in df.columns:
-        ativos_mes = df[df["ativo"] == True]
+        # Headcount: ativos no início do mês (antes dos desligamentos)
+        ativos_inicio_mes = df[df["ativo"] == True]
+        # Desligados no mês
         deslig_mes = df[df["desligado_no_mes"] == True]
         
-        a = len(ativos_mes)
+        a = len(ativos_inicio_mes)
         d = len(deslig_mes)
         
         if a == 0:
@@ -83,11 +86,12 @@ def calculate_turnover(
                 "involuntarios": 0
             }
         
-        # Identificar voluntários (contém "Pedido" no motivo)
-        if mot_col:
-            dv = deslig_mes[mot_col].astype(str).str.contains("Pedido", case=False, na=False).sum()
-        else:
-            dv = 0
+        # Identificar voluntários: tipo desligamento contém "voluntário" ou motivo contém "pedido"
+        dv = 0
+        if tipo_desl_col:
+            dv = deslig_mes[tipo_desl_col].astype(str).str.lower().str.contains("voluntário|pedido|demissão|rescisão", case=False, na=False).sum()
+        elif mot_col:
+            dv = deslig_mes[mot_col].astype(str).str.lower().str.contains("pedido|demissão|rescisão|voluntário", case=False, na=False).sum()
         
         di = d - dv
         
@@ -101,7 +105,7 @@ def calculate_turnover(
             "involuntarios": di
         }
     
-    # Caso histórico (média mensal)
+    # Caso histórico (média mensal) - usando headcount do início de cada mês
     dmin = dft[adm_col].min()
     dmax = dft[desl_col].max() if dft[desl_col].notna().any() else datetime.now()
     
@@ -125,10 +129,22 @@ def calculate_turnover(
     meses_validos = 0
     
     for mes in meses:
-        ativos_mes = dft[(dft[adm_col] <= mes) & ((dft[desl_col].isna()) | (dft[desl_col] > mes))]
-        deslig_mes = dft[(dft[desl_col].notna()) & (dft[desl_col].dt.to_period("M") == mes.to_period("M"))]
+        # Headcount no início do mês: quem foi admitido antes ou no início do mês e ainda não foi desligado
+        # Usar primeiro dia do mês para calcular headcount
+        inicio_mes = mes.replace(day=1)
+        ativos_inicio_mes = dft[
+            (dft[adm_col] <= inicio_mes) & 
+            ((dft[desl_col].isna()) | (dft[desl_col] > inicio_mes))
+        ]
         
-        a, d = len(ativos_mes), len(deslig_mes)
+        # Desligados no mês
+        deslig_mes = dft[
+            (dft[desl_col].notna()) & 
+            (dft[desl_col].dt.to_period("M") == mes.to_period("M"))
+        ]
+        
+        a = len(ativos_inicio_mes)
+        d = len(deslig_mes)
         
         if a == 0:
             continue
@@ -137,10 +153,16 @@ def calculate_turnover(
         total_ativos += a
         total_desligados += d
         
-        if mot_col:
-            dv = deslig_mes[mot_col].astype(str).str.contains("Pedido", case=False, na=False).sum()
-        else:
-            dv = 0
+        # Identificar voluntários usando tipo desligamento ou motivo
+        dv = 0
+        if tipo_desl_col and not deslig_mes.empty:
+            dv = deslig_mes[tipo_desl_col].astype(str).str.lower().str.contains(
+                "voluntário|pedido|demissão|rescisão", case=False, na=False
+            ).sum()
+        elif mot_col and not deslig_mes.empty:
+            dv = deslig_mes[mot_col].astype(str).str.lower().str.contains(
+                "pedido|demissão|rescisão|voluntário", case=False, na=False
+            ).sum()
         
         di = d - dv
         total_voluntarios += dv
@@ -167,9 +189,9 @@ def calculate_turnover(
     
     # Calcular médias
     avg_ativos = int(total_ativos / meses_validos) if meses_validos > 0 else 0
-    avg_desligados = int(total_desligados / meses_validos) if meses_validos > 0 else 0
-    avg_voluntarios = int(total_voluntarios / meses_validos) if meses_validos > 0 else 0
-    avg_involuntarios = int(total_involuntarios / meses_validos) if meses_validos > 0 else 0
+    avg_desligados = round(total_desligados / meses_validos, 1) if meses_validos > 0 else 0.0
+    avg_voluntarios = round(total_voluntarios / meses_validos, 1) if meses_validos > 0 else 0.0
+    avg_involuntarios = round(total_involuntarios / meses_validos, 1) if meses_validos > 0 else 0.0
     
     return {
         "turnover_total": round(arr[:, 0].mean(), 1),
@@ -184,15 +206,16 @@ def calculate_turnover(
 
 def calculate_turnover_history(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Calcula histórico mensal de turnover.
+    Calcula histórico mensal de turnover usando headcount do início do mês.
     
     Returns:
-        DataFrame com colunas: Mês, Ativos, Desligados, Voluntários, 
+        DataFrame com colunas: Mês, Headcount (início), Desligados, Voluntários, 
         Involuntários, Turnover Total (%), Turnover Voluntário (%), 
         Turnover Involuntário (%)
     """
     adm_col = col_like(df, "data de admissão")
     desl_col = col_like(df, "data de desligamento")
+    tipo_desl_col = col_like(df, "tipo desligamento")
     mot_col = col_like(df, "motivo de desligamento")
     
     if not adm_col or not desl_col:
@@ -212,27 +235,44 @@ def calculate_turnover_history(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
     
     for mes in meses:
-        ativos_mes = dft[(dft[adm_col] <= mes) & ((dft[desl_col].isna()) | (dft[desl_col] > mes))]
-        deslig_mes = dft[(dft[desl_col].notna()) & (dft[desl_col].dt.to_period("M") == mes.to_period("M"))]
+        # Headcount no início do mês (antes dos desligamentos)
+        inicio_mes = mes.replace(day=1)
+        headcount_inicio = dft[
+            (dft[adm_col] <= inicio_mes) & 
+            ((dft[desl_col].isna()) | (dft[desl_col] > inicio_mes))
+        ]
         
-        a, d = len(ativos_mes), len(deslig_mes)
+        # Desligados no mês
+        deslig_mes = dft[
+            (dft[desl_col].notna()) & 
+            (dft[desl_col].dt.to_period("M") == mes.to_period("M"))
+        ]
         
-        if mot_col:
-            dv = deslig_mes[mot_col].astype(str).str.contains("Pedido", case=False, na=False).sum()
-        else:
-            dv = 0
+        hc = len(headcount_inicio)
+        d = len(deslig_mes)
+        
+        # Identificar voluntários usando tipo desligamento ou motivo
+        dv = 0
+        if tipo_desl_col and not deslig_mes.empty:
+            dv = deslig_mes[tipo_desl_col].astype(str).str.lower().str.contains(
+                "voluntário|pedido|demissão|rescisão", case=False, na=False
+            ).sum()
+        elif mot_col and not deslig_mes.empty:
+            dv = deslig_mes[mot_col].astype(str).str.lower().str.contains(
+                "pedido|demissão|rescisão|voluntário", case=False, na=False
+            ).sum()
         
         di = d - dv
         
         rows.append({
             "Mês": mes.strftime("%Y-%m"),
-            "Ativos": a,
+            "Headcount (início)": hc,
             "Desligados": d,
             "Voluntários": dv,
             "Involuntários": di,
-            "Turnover Total (%)": (d/a)*100 if a>0 else 0,
-            "Turnover Voluntário (%)": (dv/a)*100 if a>0 else 0,
-            "Turnover Involuntário (%)": (di/a)*100 if a>0 else 0
+            "Turnover Total (%)": (d/hc)*100 if hc>0 else 0,
+            "Turnover Voluntário (%)": (dv/hc)*100 if hc>0 else 0,
+            "Turnover Involuntário (%)": (di/hc)*100 if hc>0 else 0
         })
     
     return pd.DataFrame(rows)
@@ -264,8 +304,20 @@ def calculate_tenure(df: pd.DataFrame) -> Dict[str, float]:
     
     tenure_total = safe_mean(dfd["tenure_meses"])
     
-    if mot_col:
-        mask_vol = dfd[mot_col].astype(str).str.contains("Pedido", case=False, na=False)
+    # Identificar voluntários usando tipo desligamento ou motivo
+    tipo_desl_col = col_like(dfd, "tipo desligamento")
+    mask_vol = pd.Series([False] * len(dfd), index=dfd.index)
+    
+    if tipo_desl_col:
+        mask_vol = dfd[tipo_desl_col].astype(str).str.lower().str.contains(
+            "voluntário|pedido|demissão|rescisão", case=False, na=False
+        )
+    elif mot_col:
+        mask_vol = dfd[mot_col].astype(str).str.lower().str.contains(
+            "pedido|demissão|rescisão|voluntário", case=False, na=False
+        )
+    
+    if mask_vol.any():
         tenure_vol = safe_mean(dfd.loc[mask_vol, "tenure_meses"])
         tenure_inv = safe_mean(dfd.loc[~mask_vol, "tenure_meses"])
     else:
@@ -282,6 +334,7 @@ def calculate_tenure(df: pd.DataFrame) -> Dict[str, float]:
 def calculate_headcount(df: pd.DataFrame, group_by: str = "departamento") -> pd.DataFrame:
     """
     Calcula headcount agrupado por coluna especificada.
+    Exclui apenas quem tem data de desligamento (está desligado).
     
     Args:
         df: DataFrame com colaboradores
@@ -295,15 +348,15 @@ def calculate_headcount(df: pd.DataFrame, group_by: str = "departamento") -> pd.
     if not group_col:
         return pd.DataFrame()
     
-    # Filtrar apenas ativos
-    if "ativo" in df.columns:
-        base = df[df["ativo"] == True]
+    # Filtrar apenas quem NÃO tem data de desligamento (ativo)
+    desl_col = col_like(df, "data de desligamento")
+    if desl_col:
+        # Apenas quem não tem data de desligamento
+        base = df[df[desl_col].isna()].copy()
+    elif "ativo" in df.columns:
+        base = df[df["ativo"] == True].copy()
     else:
-        desl_col = col_like(df, "data de desligamento")
-        if desl_col:
-            base = df[df[desl_col].isna()]
-        else:
-            base = df
+        base = df.copy()
     
     if base.empty:
         return pd.DataFrame()
@@ -317,6 +370,78 @@ def calculate_headcount(df: pd.DataFrame, group_by: str = "departamento") -> pd.
     dist["%"] = (dist["Headcount"] / dist["Headcount"].sum()) * 100
     
     return dist.sort_values("Headcount", ascending=False).reset_index(drop=True)
+
+
+def calculate_contract_types(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calcula distribuição de todos os tipos de contrato com % e quantidade.
+    
+    Returns:
+        DataFrame com Tipo, Quantidade, Percentual
+    """
+    ativos = df[df["ativo"] == True] if "ativo" in df.columns else df
+    tipo_c = col_like(ativos, "tipo_contrato")
+    
+    if not tipo_c or ativos.empty:
+        return pd.DataFrame()
+    
+    # Contar por tipo de contrato
+    dist = ativos[tipo_c].value_counts().reset_index()
+    dist.columns = ["Tipo", "Quantidade"]
+    dist["Percentual (%)"] = (dist["Quantidade"] / dist["Quantidade"].sum() * 100).round(1)
+    
+    return dist.sort_values("Quantidade", ascending=False).reset_index(drop=True)
+
+
+def calculate_monthly_dismissals(df: pd.DataFrame) -> Dict[str, float]:
+    """
+    Calcula desligamentos médios por mês.
+    
+    Returns:
+        Dict com desligamentos_medio_mes e detalhamento
+    """
+    desl_col = col_like(df, "data de desligamento")
+    
+    if not desl_col:
+        return {
+            "desligamentos_medio_mes": 0.0,
+            "total_desligados": 0,
+            "meses_com_dados": 0
+        }
+    
+    dft = df.copy()
+    dft[desl_col] = pd.to_datetime(dft[desl_col], errors="coerce")
+    
+    # Filtrar apenas quem tem data de desligamento
+    desligados = dft[dft[desl_col].notna()]
+    
+    if desligados.empty:
+        return {
+            "desligamentos_medio_mes": 0.0,
+            "total_desligados": 0,
+            "meses_com_dados": 0
+        }
+    
+    # Agrupar por mês
+    desligados["mes_ano"] = desligados[desl_col].dt.to_period("M")
+    desligados_por_mes = desligados["mes_ano"].value_counts()
+    
+    if desligados_por_mes.empty:
+        return {
+            "desligamentos_medio_mes": 0.0,
+            "total_desligados": 0,
+            "meses_com_dados": 0
+        }
+    
+    deslig_medio = desligados_por_mes.mean()
+    total_deslig = len(desligados)
+    meses_com_dados = len(desligados_por_mes)
+    
+    return {
+        "desligamentos_medio_mes": round(deslig_medio, 1),
+        "total_desligados": total_deslig,
+        "meses_com_dados": meses_com_dados
+    }
 
 
 def calculate_basic_kpis(df: pd.DataFrame) -> Dict[str, any]:

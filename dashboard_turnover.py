@@ -15,6 +15,8 @@ from utils import (
     calculate_tenure,
     calculate_headcount,
     calculate_basic_kpis,
+    calculate_contract_types,
+    calculate_monthly_dismissals,
     safe_mean,
     norm_0_1
 )
@@ -271,37 +273,54 @@ st.markdown("---")
 def view_overview(dfv):
     st.subheader("📍 Visão Geral — KPIs Consolidados")
 
-    # -------------------------------
-    # KPI BÁSICOS (usando módulo)
-    # -------------------------------
+    # ============================================================
+    # 1. HEADCOUNT ATUAL
+    # ============================================================
+    st.markdown("### 👥 Headcount Atual")
     basic_kpis = calculate_basic_kpis(dfv)
     
-    st.markdown("### 👥 Estrutura de Colaboradores")
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total Ativos", basic_kpis["total_ativos"])
-    c2.metric("CLT", f"{basic_kpis['qtd_clt']} ({basic_kpis['pct_clt']}%)")
-    c3.metric("Feminino", f"{basic_kpis['qtd_feminino']} ({basic_kpis['pct_feminino']}%)")
-    c4.metric("Masculino", f"{basic_kpis['qtd_masculino']} ({basic_kpis['pct_masculino']}%)")
-    
-    c5, c6 = st.columns(2)
-    c5.metric("Liderança", f"{basic_kpis['qtd_lideranca']} ({basic_kpis['pct_lideranca']}%)")
-    
-    # Mostrar outros tipos de contrato se houver
-    tipo_c = col_like(dfv, "tipo_contrato")
-    if tipo_c and basic_kpis["total_ativos"] > 0:
-        ativos = dfv[dfv["ativo"] == True] if "ativo" in dfv.columns else dfv
-        outros_contratos = basic_kpis["total_ativos"] - basic_kpis["qtd_clt"]
-        pct_outros = round((outros_contratos / basic_kpis["total_ativos"]) * 100, 1) if basic_kpis["total_ativos"] > 0 else 0
-        c6.metric("Outros Contratos", f"{outros_contratos} ({pct_outros}%)")
+    c2.metric("Feminino", f"{basic_kpis['qtd_feminino']} ({basic_kpis['pct_feminino']}%)")
+    c3.metric("Masculino", f"{basic_kpis['qtd_masculino']} ({basic_kpis['pct_masculino']}%)")
+    c4.metric("Liderança", f"{basic_kpis['qtd_lideranca']} ({basic_kpis['pct_lideranca']}%)")
 
-    # -------------------------------
-    # TURNOVER (usando módulo)
-    # -------------------------------
+    st.divider()
+
+    # ============================================================
+    # 2. TIPOS DE CONTRATO (TODOS COM % E QUANTIDADE)
+    # ============================================================
+    st.markdown("### 📋 Tipos de Contrato")
+    contract_types = calculate_contract_types(dfv)
+    
+    if not contract_types.empty:
+        # Mostrar métricas principais
+        cols = st.columns(min(len(contract_types), 4))
+        for idx, row in contract_types.head(4).iterrows():
+            with cols[idx]:
+                st.metric(
+                    row["Tipo"] if pd.notna(row["Tipo"]) else "N/A",
+                    f"{int(row['Quantidade'])} ({row['Percentual (%)']}%)"
+                )
+        
+        # Mostrar tabela completa
+        with st.expander("📊 Ver todos os tipos de contrato"):
+            st.dataframe(contract_types, use_container_width=True, hide_index=True)
+    else:
+        st.info("ℹ️ Não há dados de tipo de contrato disponíveis.")
+    
+    st.divider()
+
+    # ============================================================
+    # 3. TURNOVER (COM HEADCOUNT DO MÊS)
+    # ============================================================
+    st.markdown("### 🔄 Turnover")
+    st.caption("Calculado com base no headcount do início de cada mês")
+    
     # Verificar se tem período específico
     periodo = None
     if "desligado_no_mes" in dfv.columns and "ativo" in dfv.columns:
-        # Usar período da competência selecionada
-        periodo = datetime.now()  # Placeholder - será usado pela função
+        periodo = datetime.now()
     
     turnover_data = calculate_turnover(dfv, periodo)
     
@@ -314,18 +333,16 @@ def view_overview(dfv):
     turnover_vol = turnover_data.get("turnover_vol", 0.0) or 0.0
     turnover_inv = turnover_data.get("turnover_inv", 0.0) or 0.0
     
-    st.markdown("### 🔄 Turnover")
-    
-    # Mostrar quantidades primeiro
+    # Quantidades
     st.markdown("#### Quantidades (Médias Históricas)")
     c7, c8, c9, c10 = st.columns(4)
-    c7.metric("Ativos (média)", int(ativos_medio))
-    c8.metric("Desligados (média)", int(desligados_medio))
-    c9.metric("Voluntários (média)", int(voluntarios_medio))
-    c10.metric("Involuntários (média)", int(involuntarios_medio))
+    c7.metric("Headcount Médio", int(ativos_medio) if isinstance(ativos_medio, (int, float)) else int(float(ativos_medio)))
+    c8.metric("Desligados/mês (média)", f"{desligados_medio:.1f}" if isinstance(desligados_medio, float) else int(desligados_medio))
+    c9.metric("Voluntários/mês (média)", f"{voluntarios_medio:.1f}" if isinstance(voluntarios_medio, float) else int(voluntarios_medio))
+    c10.metric("Involuntários/mês (média)", f"{involuntarios_medio:.1f}" if isinstance(involuntarios_medio, float) else int(involuntarios_medio))
     
-    # Mostrar percentuais
-    st.markdown("#### Percentuais")
+    # Percentuais
+    st.markdown("#### Percentuais de Turnover")
     c11, c12, c13 = st.columns(3)
     c11.metric("Turnover Total (%)", f"{turnover_total:.1f}%")
     c12.metric("Turnover Voluntário (%)", f"{turnover_vol:.1f}%")
@@ -335,22 +352,38 @@ def view_overview(dfv):
     if ativos_medio == 0 and desligados_medio == 0:
         st.info("ℹ️ Não há dados históricos suficientes para calcular turnover. Verifique se há registros com datas de admissão e desligamento.")
 
-    # -------------------------------
-    # TENURE MÉDIO (usando módulo)
-    # -------------------------------
+    st.divider()
+
+    # ============================================================
+    # 4. DESLIGAMENTOS MÉDIOS POR MÊS
+    # ============================================================
+    st.markdown("### 📊 Desligamentos por Mês")
+    dismissals_data = calculate_monthly_dismissals(dfv)
+    
+    c14, c15, c16 = st.columns(3)
+    c14.metric("Desligamentos Médios/mês", f"{dismissals_data['desligamentos_medio_mes']:.1f}")
+    c15.metric("Total de Desligados", dismissals_data["total_desligados"])
+    c16.metric("Meses com Dados", dismissals_data["meses_com_dados"])
+    
+    st.divider()
+
+    # ============================================================
+    # 5. TENURE MÉDIO
+    # ============================================================
+    st.markdown("### ⏳ Tenure (Tempo Médio até Desligamento)")
     tenure_data = calculate_tenure(dfv)
     
-    st.markdown("### ⏳ Tenure (Tempo Médio)")
-    c8, c9, c10 = st.columns(3)
-    c8.metric("Total (m)", f"{tenure_data['tenure_total']}")
-    c9.metric("Voluntário (m)", f"{tenure_data['tenure_vol']}")
-    c10.metric("Involuntário (m)", f"{tenure_data['tenure_inv']}")
+    c17, c18, c19 = st.columns(3)
+    c17.metric("Tenure Médio Total (meses)", f"{tenure_data['tenure_total']:.1f}")
+    c18.metric("Tenure Voluntário (meses)", f"{tenure_data['tenure_vol']:.1f}")
+    c19.metric("Tenure Involuntário (meses)", f"{tenure_data['tenure_inv']:.1f}")
     
-    # -------------------------------
-    # INSIGHTS DE IA (Premium)
-    # -------------------------------
+    st.divider()
+
+    # ============================================================
+    # 6. INSIGHTS DE IA (Premium)
+    # ============================================================
     if has_feature("Premium"):
-        st.divider()
         st.markdown("### 🤖 Insights de IA (Premium)")
         
         with st.spinner("Gerando insights de IA..."):
@@ -450,8 +483,12 @@ def view_turnover(dfv):
     # 🔹 KPIs Médios (histórico)
     # ============================================================
     st.markdown("### 📊 Indicadores Históricos (Média Geral)")
+    st.caption("Baseado no headcount do início de cada mês")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Ativos Médios", int(turn["Ativos"].mean()))
+    
+    # Verificar qual coluna existe (pode ser "Headcount (início)" ou "Ativos")
+    hc_col = "Headcount (início)" if "Headcount (início)" in turn.columns else "Ativos"
+    c1.metric("Headcount Médio (início)", int(turn[hc_col].mean()))
     c2.metric("Desligamentos Médios", int(turn["Desligados"].mean()))
     c3.metric("Turnover Médio (%)", round(turn["Turnover Total (%)"].mean(), 1))
     c4.metric(
@@ -490,15 +527,16 @@ def view_turnover(dfv):
     st.plotly_chart(fig1, use_container_width=True)
 
     # ============================================================
-    # 📊 Gráfico 2: Ativos x Desligados
+    # 📊 Gráfico 2: Headcount x Desligados
     # ============================================================
     fig2 = go.Figure()
-    fig2.add_trace(go.Bar(x=turn["Mês"], y=turn["Ativos"], name="Ativos", marker_color="rgba(0,255,204,0.4)"))
+    hc_col = "Headcount (início)" if "Headcount (início)" in turn.columns else "Ativos"
+    fig2.add_trace(go.Bar(x=turn["Mês"], y=turn[hc_col], name="Headcount (início)", marker_color="rgba(0,255,204,0.4)"))
     fig2.add_trace(go.Bar(x=turn["Mês"], y=turn["Desligados"], name="Desligados", marker_color="rgba(255,80,80,0.7)"))
     fig2.update_layout(
         barmode="overlay",
         template="plotly_dark",
-        title="📊 Ativos x Desligados por Mês",
+        title="📊 Headcount (início do mês) x Desligados por Mês",
         xaxis_title="Mês",
         yaxis_title="Quantidade"
     )

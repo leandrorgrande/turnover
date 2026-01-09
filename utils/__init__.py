@@ -13,6 +13,8 @@ from utils.kpi_helpers import (
     calculate_tenure,
     calculate_headcount,
     calculate_basic_kpis,
+    calculate_contract_types,
+    calculate_monthly_dismissals,
     safe_mean,
     norm_0_1
 )
@@ -27,6 +29,8 @@ __all__ = [
     "calculate_tenure",
     "calculate_headcount",
     "calculate_basic_kpis",
+    "calculate_contract_types",
+    "calculate_monthly_dismissals",
     "safe_mean",
     "norm_0_1"
 ]
