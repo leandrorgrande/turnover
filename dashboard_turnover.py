@@ -276,11 +276,23 @@ def view_overview(dfv):
     # -------------------------------
     basic_kpis = calculate_basic_kpis(dfv)
     
+    st.markdown("### 👥 Estrutura de Colaboradores")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Ativos", basic_kpis["total_ativos"])
-    c2.metric("% CLT", f"{basic_kpis['pct_clt']}%")
-    c3.metric("% Feminino", f"{basic_kpis['pct_feminino']}%")
-    c4.metric("% Liderança", f"{basic_kpis['pct_lideranca']}%")
+    c1.metric("Total Ativos", basic_kpis["total_ativos"])
+    c2.metric("CLT", f"{basic_kpis['qtd_clt']} ({basic_kpis['pct_clt']}%)")
+    c3.metric("Feminino", f"{basic_kpis['qtd_feminino']} ({basic_kpis['pct_feminino']}%)")
+    c4.metric("Masculino", f"{basic_kpis['qtd_masculino']} ({basic_kpis['pct_masculino']}%)")
+    
+    c5, c6 = st.columns(2)
+    c5.metric("Liderança", f"{basic_kpis['qtd_lideranca']} ({basic_kpis['pct_lideranca']}%)")
+    
+    # Mostrar outros tipos de contrato se houver
+    tipo_c = col_like(dfv, "tipo_contrato")
+    if tipo_c and basic_kpis["total_ativos"] > 0:
+        ativos = dfv[dfv["ativo"] == True] if "ativo" in dfv.columns else dfv
+        outros_contratos = basic_kpis["total_ativos"] - basic_kpis["qtd_clt"]
+        pct_outros = round((outros_contratos / basic_kpis["total_ativos"]) * 100, 1) if basic_kpis["total_ativos"] > 0 else 0
+        c6.metric("Outros Contratos", f"{outros_contratos} ({pct_outros}%)")
 
     # -------------------------------
     # TURNOVER (usando módulo)
@@ -293,11 +305,35 @@ def view_overview(dfv):
     
     turnover_data = calculate_turnover(dfv, periodo)
     
-    st.markdown("### 🔄 Turnover Médio")
-    c5, c6, c7 = st.columns(3)
-    c5.metric("Total (%)", turnover_data.get("turnover_total", 0.0))
-    c6.metric("Voluntário (%)", turnover_data.get("turnover_vol", 0.0))
-    c7.metric("Involuntário (%)", turnover_data.get("turnover_inv", 0.0))
+    # Garantir que todos os valores existam
+    ativos_medio = turnover_data.get("ativos", 0) or 0
+    desligados_medio = turnover_data.get("desligados", 0) or 0
+    voluntarios_medio = turnover_data.get("voluntarios", 0) or 0
+    involuntarios_medio = turnover_data.get("involuntarios", 0) or 0
+    turnover_total = turnover_data.get("turnover_total", 0.0) or 0.0
+    turnover_vol = turnover_data.get("turnover_vol", 0.0) or 0.0
+    turnover_inv = turnover_data.get("turnover_inv", 0.0) or 0.0
+    
+    st.markdown("### 🔄 Turnover")
+    
+    # Mostrar quantidades primeiro
+    st.markdown("#### Quantidades (Médias Históricas)")
+    c7, c8, c9, c10 = st.columns(4)
+    c7.metric("Ativos (média)", int(ativos_medio))
+    c8.metric("Desligados (média)", int(desligados_medio))
+    c9.metric("Voluntários (média)", int(voluntarios_medio))
+    c10.metric("Involuntários (média)", int(involuntarios_medio))
+    
+    # Mostrar percentuais
+    st.markdown("#### Percentuais")
+    c11, c12, c13 = st.columns(3)
+    c11.metric("Turnover Total (%)", f"{turnover_total:.1f}%")
+    c12.metric("Turnover Voluntário (%)", f"{turnover_vol:.1f}%")
+    c13.metric("Turnover Involuntário (%)", f"{turnover_inv:.1f}%")
+    
+    # Aviso se não houver dados
+    if ativos_medio == 0 and desligados_medio == 0:
+        st.info("ℹ️ Não há dados históricos suficientes para calcular turnover. Verifique se há registros com datas de admissão e desligamento.")
 
     # -------------------------------
     # TENURE MÉDIO (usando módulo)

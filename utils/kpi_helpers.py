@@ -50,7 +50,15 @@ def calculate_turnover(
     mot_col = col_like(df, "motivo de desligamento")
     
     if not adm_col or not desl_col:
-        return {"turnover_total": 0.0, "turnover_vol": 0.0, "turnover_inv": 0.0}
+        return {
+            "turnover_total": 0.0, 
+            "turnover_vol": 0.0, 
+            "turnover_inv": 0.0,
+            "ativos": 0,
+            "desligados": 0,
+            "voluntarios": 0,
+            "involuntarios": 0
+        }
     
     dft = df.copy()
     dft[adm_col] = pd.to_datetime(dft[adm_col], errors="coerce")
@@ -65,7 +73,15 @@ def calculate_turnover(
         d = len(deslig_mes)
         
         if a == 0:
-            return {"turnover_total": 0.0, "turnover_vol": 0.0, "turnover_inv": 0.0}
+            return {
+                "turnover_total": 0.0, 
+                "turnover_vol": 0.0, 
+                "turnover_inv": 0.0,
+                "ativos": 0,
+                "desligados": 0,
+                "voluntarios": 0,
+                "involuntarios": 0
+            }
         
         # Identificar voluntários (contém "Pedido" no motivo)
         if mot_col:
@@ -90,10 +106,23 @@ def calculate_turnover(
     dmax = dft[desl_col].max() if dft[desl_col].notna().any() else datetime.now()
     
     if pd.isna(dmin):
-        return {"turnover_total": 0.0, "turnover_vol": 0.0, "turnover_inv": 0.0}
+        return {
+            "turnover_total": 0.0, 
+            "turnover_vol": 0.0, 
+            "turnover_inv": 0.0,
+            "ativos": 0,
+            "desligados": 0,
+            "voluntarios": 0,
+            "involuntarios": 0
+        }
     
     meses = pd.date_range(dmin, dmax, freq="MS")
     vals = []
+    total_ativos = 0
+    total_desligados = 0
+    total_voluntarios = 0
+    total_involuntarios = 0
+    meses_validos = 0
     
     for mes in meses:
         ativos_mes = dft[(dft[adm_col] <= mes) & ((dft[desl_col].isna()) | (dft[desl_col] > mes))]
@@ -104,12 +133,19 @@ def calculate_turnover(
         if a == 0:
             continue
         
+        meses_validos += 1
+        total_ativos += a
+        total_desligados += d
+        
         if mot_col:
             dv = deslig_mes[mot_col].astype(str).str.contains("Pedido", case=False, na=False).sum()
         else:
             dv = 0
         
         di = d - dv
+        total_voluntarios += dv
+        total_involuntarios += di
+        
         vals.append([
             (d/a)*100 if a>0 else 0,
             (dv/a)*100 if a>0 else 0,
@@ -117,13 +153,32 @@ def calculate_turnover(
         ])
     
     if not vals:
-        return {"turnover_total": 0.0, "turnover_vol": 0.0, "turnover_inv": 0.0}
+        return {
+            "turnover_total": 0.0, 
+            "turnover_vol": 0.0, 
+            "turnover_inv": 0.0,
+            "ativos": 0,
+            "desligados": 0,
+            "voluntarios": 0,
+            "involuntarios": 0
+        }
     
     arr = np.array(vals)
+    
+    # Calcular médias
+    avg_ativos = int(total_ativos / meses_validos) if meses_validos > 0 else 0
+    avg_desligados = int(total_desligados / meses_validos) if meses_validos > 0 else 0
+    avg_voluntarios = int(total_voluntarios / meses_validos) if meses_validos > 0 else 0
+    avg_involuntarios = int(total_involuntarios / meses_validos) if meses_validos > 0 else 0
+    
     return {
         "turnover_total": round(arr[:, 0].mean(), 1),
         "turnover_vol": round(arr[:, 1].mean(), 1),
-        "turnover_inv": round(arr[:, 2].mean(), 1)
+        "turnover_inv": round(arr[:, 2].mean(), 1),
+        "ativos": avg_ativos,
+        "desligados": avg_desligados,
+        "voluntarios": avg_voluntarios,
+        "involuntarios": avg_involuntarios
     }
 
 
@@ -266,27 +321,57 @@ def calculate_headcount(df: pd.DataFrame, group_by: str = "departamento") -> pd.
 
 def calculate_basic_kpis(df: pd.DataFrame) -> Dict[str, any]:
     """
-    Calcula KPIs básicos consolidados.
+    Calcula KPIs básicos consolidados com quantidades e percentuais.
     
     Returns:
-        Dict com todos os KPIs básicos
+        Dict com todos os KPIs básicos incluindo quantidades
     """
     ativos = df[df["ativo"] == True] if "ativo" in df.columns else df
+    total_ativos = len(ativos)
     
+    # Tipo de contrato
     tipo_c = col_like(ativos, "tipo_contrato")
-    pct_clt = round((ativos[tipo_c].astype(str).str.upper().eq("CLT")).mean()*100, 1) if tipo_c else 0
+    if tipo_c and total_ativos > 0:
+        mask_clt = ativos[tipo_c].astype(str).str.upper().eq("CLT")
+        qtd_clt = mask_clt.sum()
+        pct_clt = round((qtd_clt / total_ativos) * 100, 1)
+    else:
+        qtd_clt = 0
+        pct_clt = 0.0
     
+    # Gênero
     gen_c = col_like(ativos, "genero")
-    pct_fem = round((ativos[gen_c].astype(str).str.lower().eq("feminino")).mean()*100, 1) if gen_c else 0
+    if gen_c and total_ativos > 0:
+        mask_fem = ativos[gen_c].astype(str).str.lower().eq("feminino")
+        mask_masc = ativos[gen_c].astype(str).str.lower().isin(["masculino", "m"])
+        qtd_fem = mask_fem.sum()
+        qtd_masc = mask_masc.sum()
+        pct_fem = round((qtd_fem / total_ativos) * 100, 1)
+        pct_masc = round((qtd_masc / total_ativos) * 100, 1)
+    else:
+        qtd_fem = 0
+        qtd_masc = 0
+        pct_fem = 0.0
+        pct_masc = 0.0
     
+    # Liderança
     cargo_c = col_like(ativos, "cargo")
-    pct_lider = round(
-        ativos[cargo_c].astype(str).str.lower().str.contains("coord|gerente|diretor", na=False).mean()*100, 1
-    ) if cargo_c else 0
+    if cargo_c and total_ativos > 0:
+        mask_lider = ativos[cargo_c].astype(str).str.lower().str.contains("coord|gerente|diretor", na=False)
+        qtd_lider = mask_lider.sum()
+        pct_lider = round((qtd_lider / total_ativos) * 100, 1)
+    else:
+        qtd_lider = 0
+        pct_lider = 0.0
     
     return {
-        "total_ativos": len(ativos),
+        "total_ativos": total_ativos,
+        "qtd_clt": qtd_clt,
         "pct_clt": pct_clt,
+        "qtd_feminino": qtd_fem,
         "pct_feminino": pct_fem,
+        "qtd_masculino": qtd_masc,
+        "pct_masculino": pct_masc,
+        "qtd_lideranca": qtd_lider,
         "pct_lideranca": pct_lider
     }
