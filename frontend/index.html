@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>People Analytics - LRG Tech Analytics</title>
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react@17/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@17/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
@@ -61,6 +61,13 @@
 
     <script type="text/babel">
         const { useState, useEffect } = React;
+
+        // Polyfill para createRoot (React 17 usa render diretamente)
+        if (!ReactDOM.createRoot) {
+            ReactDOM.createRoot = (container) => ({
+                render: (element) => ReactDOM.render(element, container)
+            });
+        }
 
         const API_URL = 'https://people-analytics-api-286602273391.us-central1.run.app';
 
