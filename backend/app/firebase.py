@@ -26,19 +26,24 @@ def initialize_firebase():
         return _firebase_app
     
     try:
-        cred_path = settings.get_firebase_credentials_path()
-        
-        if not cred_path.exists():
-            # Tentar usar credenciais do ambiente (para produção)
-            if os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
-                cred = credentials.ApplicationDefault()
+        # Em produção (Cloud Run), usar Application Default Credentials
+        # Isso funciona automaticamente quando o serviço tem a Service Account configurada
+        if os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or os.getenv("GAE_ENV") or os.getenv("K_SERVICE"):
+            # Cloud Run ou ambiente de produção
+            logger.info("Usando Application Default Credentials (Cloud Run/Produção)")
+            cred = credentials.ApplicationDefault()
+        else:
+            # Desenvolvimento local - tentar arquivo de credenciais
+            cred_path = settings.get_firebase_credentials_path()
+            if cred_path.exists():
+                logger.info(f"Usando credenciais do arquivo: {cred_path}")
+                cred = credentials.Certificate(str(cred_path))
             else:
                 raise FileNotFoundError(
                     f"Arquivo de credenciais não encontrado: {cred_path}\n"
-                    "Baixe o serviceAccountKey.json do Firebase Console e coloque na raiz do projeto."
+                    "Para desenvolvimento local: Baixe o serviceAccountKey.json do Firebase Console\n"
+                    "Para produção: Configure Service Account no Cloud Run"
                 )
-        else:
-            cred = credentials.Certificate(str(cred_path))
         
         _firebase_app = firebase_admin.initialize_app(
             cred,
