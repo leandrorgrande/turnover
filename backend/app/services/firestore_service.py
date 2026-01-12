@@ -150,13 +150,18 @@ class FirestoreService:
         import pandas as pd
         cleaned = {}
         for k, v in d.items():
-            if pd.isna(v) if hasattr(pd, 'isna') and (isinstance(v, float) or isinstance(v, pd.Timestamp)) else False:
-                cleaned[k] = None
-            elif isinstance(v, dict):
-                cleaned[k] = self._clean_dict_for_firestore(v)
-            elif isinstance(v, list):
-                cleaned[k] = [self._clean_dict_for_firestore(item) if isinstance(item, dict) else item for item in v]
-            else:
+            try:
+                # Verificar se é NaN/NaT (valores incompatíveis com Firestore)
+                if isinstance(v, (float, pd.Timestamp)) and pd.isna(v):
+                    cleaned[k] = None
+                elif isinstance(v, dict):
+                    cleaned[k] = self._clean_dict_for_firestore(v)
+                elif isinstance(v, list):
+                    cleaned[k] = [self._clean_dict_for_firestore(item) if isinstance(item, dict) else item for item in v]
+                else:
+                    cleaned[k] = v
+            except (TypeError, ValueError):
+                # Se não conseguir verificar, manter o valor
                 cleaned[k] = v
         return cleaned
     
