@@ -41,23 +41,30 @@ def to_datetime_safe(df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
 
 
 def ensure_core_fields(colab: pd.DataFrame) -> pd.DataFrame:
-    """Garante que campos essenciais existam."""
+    """
+    Garante que campos essenciais existam.
+    Funciona de forma flexível - só adiciona campos se as colunas base existirem.
+    """
     colab = colab.copy()
     
-    # Flag ativo
+    # Flag ativo - só adiciona se tiver coluna de desligamento
     desl_col = col_like(colab, "data de desligamento")
     if desl_col:
         colab["ativo"] = colab[desl_col].isna()
     else:
+        # Se não tiver data de desligamento, assume que todos estão ativos
         colab["ativo"] = True
     
-    # Tempo de casa (meses)
+    # Tempo de casa (meses) - só calcula se tiver data de admissão
     adm_col = col_like(colab, "data de admissão")
     if adm_col:
         now = pd.Timestamp.now()
-        colab[adm_col] = pd.to_datetime(colab[adm_col], errors="coerce")
+        # Garantir que é datetime
+        if not pd.api.types.is_datetime64_any_dtype(colab[adm_col]):
+            colab[adm_col] = pd.to_datetime(colab[adm_col], errors="coerce")
         colab["tempo_casa"] = (now - colab[adm_col]).dt.days / 30
     else:
+        # Se não tiver data de admissão, não calcula tempo de casa
         colab["tempo_casa"] = np.nan
     
     return colab

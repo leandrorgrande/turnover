@@ -46,13 +46,15 @@ async def upload_dataset(
         metadata = {
             'name': file.filename,
             'filename': file.filename,
-            'rows': len(data['colaboradores']),
+            'rows': len(data['colaboradores']) if not data['colaboradores'].empty else 0,
             'uploaded_at': None,  # Será preenchido pelo Firestore
         }
         
         firestore_service.save_dataset(user['uid'], dataset_id, metadata)
         
-        # TODO: Salvar dados processados (pode ser em storage ou cache)
+        # Salvar dados processados no Firestore (estrutura flexível)
+        # Os dados são salvos como estão, sem padronização rígida
+        firestore_service.save_dataset_data(user['uid'], dataset_id, data)
         
         return UploadResponse(
             dataset_id=dataset_id,
